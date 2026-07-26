@@ -29,7 +29,10 @@ Premium dark-themed mobile ecommerce app for electronics & appliances with a ful
 - Storage: SecureStore for token, AsyncStorage for user
 - Currency: ₹ (INR) via `@/src/utils/currency`
 
-## Seeded data
+## Recent Additions (v3)
+- **Per-product custom EMI overrides**: products can set `emi_overrides` with `interest_rate`, `tenures`, `down_payment_percent`, `processing_fee`, and `custom_charges` (array of `{label, amount, type: 'fixed'|'percent'}`). Product overrides win over global config on calc + apply.
+- **Enhanced admin EMI review**: dedicated `/(admin)/emi/[id]` screen showing full customer profile (name/email/phone/CIBIL/limits/EMI history), KYC snapshot (masked Aadhar), product, address, and an editable EMI schema (rate, down payment, fee, add/remove custom charges) with live preview. Sanction endpoint recomputes financials from admin edits and sets `admin_edited=true`.
+- **Application snapshots** now include full KYC + credit + user_stats at apply time; admin detail endpoint additionally attaches fresh `user_current` snapshot.
 - 11 electronics products in INR (iPhone 15 Pro ₹1,34,900; MacBook Pro ₹1,99,900; Sony TV ₹1,29,900; PS5 ₹54,990; Galaxy S24 Ultra ₹1,29,999; Sony WH-1000XM5 ₹29,990; Watch Ultra 2 ₹89,900; Dell XPS 15 ₹1,79,900; LG C3 OLED ₹1,49,900; Xbox Series X ₹54,990; boAt headphones ₹1,999 for below-threshold demo)
 - 3 users (admin/inventory/customer) — see `test_credentials.md`
 - Default EMI config: 12% APR, ₹5,000 threshold, tenures [3,6,12,24], 20% down payment, ₹500 processing fee
