@@ -1,0 +1,187 @@
+{
+  "app_name": "Onyx Electronics",
+  "personality": "6 Glass / Luxe DARK fused with 7 Dark-First Utility for dashboard data density",
+  "personality_one_liner": "A sleek, premium dark-mode experience that feels like a high-end electronics showroom, combining glassmorphic depth with high-contrast utility for EMI tracking.",
+  "color": {
+    "surface": "#0a0a0a",
+    "onSurface": "#f5f5f5",
+    "surfaceSecondary": "#151515",
+    "onSurfaceSecondary": "#e0e0e0",
+    "surfaceTertiary": "#1f1f1f",
+    "onSurfaceTertiary": "#a3a3a3",
+    "surfaceInverse": "#f8f8f8",
+    "onSurfaceInverse": "#0a0a0a",
+    "brand": "#d4af37",
+    "brandPrimary": "#ffffff",
+    "onBrandPrimary": "#000000",
+    "brandSecondary": "#d4af37",
+    "onBrandSecondary": "#000000",
+    "brandTertiary": "#2a2a2a",
+    "onBrandTertiary": "#f5f5f5",
+    "success": "#10b981",
+    "onSuccess": "#ffffff",
+    "warning": "#f59e0b",
+    "onWarning": "#000000",
+    "error": "#ef4444",
+    "onError": "#ffffff",
+    "info": "#6b7280",
+    "onInfo": "#ffffff",
+    "border": "#262626",
+    "borderStrong": "#404040",
+    "divider": "#1a1a1a"
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room. Cards use md margin, never flush to edges. Elements inside forms use sm spacing.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 0,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use glass on bottom tab bar, sticky headers, and featured hero product cards overlay.",
+      "Pair blur with a translucent tinted base (≥75% opacity) in dark mode to guarantee readability.",
+      "Use glass for premium 'EMI Available' status badges."
+    ],
+    "dont's": [
+      "Never blur body text, standard form fields, or standard list rows.",
+      "Never rely on blur alone for contrast; always include the dark tint base."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Customer Home",
+      "purpose": "Discover premium electronics and check EMI eligibility instantly.",
+      "states": {
+        "loading": "Centered minimalist spinner with abstract glass geometric shape fading in/out.",
+        "empty": "N/A",
+        "error": "Readable text with 'Retry Connection' button on a dark charcoal surface."
+      },
+      "layout": "Hero featured product (e.g., iPhone 15 Pro) with a glassmorphic 'EMI from $49/mo' badge. Below hero, a bento-grid style catalog layout with deep graphite cards and high-contrast photography. Sticky white bottom CTA 'Check EMI Eligibility' if scrolling through a specific promo."
+    },
+    {
+      "name": "Product Detail & EMI Calculator",
+      "purpose": "View device specs, calculate installment tenures, and proceed to checkout.",
+      "states": {
+        "loading": "Skeleton loaders for image and typography.",
+        "empty": "Product unavailable illustration.",
+        "error": "Error loading product data."
+      },
+      "layout": "Edge-to-edge product image at the top with vertical top-to-bottom gradient scrim (transparent to surface). Content underneath includes spec chips (surfaceTertiary) and an interactive EMI calculator bottom sheet (glass header) with segmented controls (3/6/9/12 months) and real-time interest updates. Sticky 'Add to Cart' button."
+    },
+    {
+      "name": "EMI Schedule & Orders (Customer)",
+      "purpose": "Track upcoming payments and past orders in a single glance.",
+      "states": {
+        "loading": "Skeleton rows.",
+        "empty": "Illustration of a calendar/box with 'No active EMIs'.",
+        "error": "Failed to load EMI schedule."
+      },
+      "layout": "Top summary card (brandSecondary / Gold tint) showing 'Next EMI Due' and amount. Below, a timeline list of monthly installments using success (Emerald) for paid, and surfaceTertiary for upcoming. High utility, sharp typography for numbers (Dark-First Utility)."
+    },
+    {
+      "name": "Admin Dashboard",
+      "purpose": "High-level overview of revenue, EMI default risks, and approvals.",
+      "states": {
+        "loading": "Skeleton grids.",
+        "empty": "No data available yet.",
+        "error": "Could not connect to Admin API."
+      },
+      "layout": "Dense data view. Top row of metric cards (Total Revenue, Active Users). Split panels for 'Pending EMI Approvals' and 'Recent Orders'. Use condensed typography for numeric values to prioritize glanceability."
+    },
+    {
+      "name": "Inventory Manager Dashboard",
+      "purpose": "Track stock levels, receive low-stock alerts, and restock.",
+      "states": {
+        "loading": "Skeleton lists.",
+        "empty": "All stock is healthy.",
+        "error": "Inventory sync failed."
+      },
+      "layout": "List-heavy utility screen. High-contrast alerts using warning/error tokens for low stock. Quick-action pill buttons 'Restock' directly on the list rows. Clear search and filter sticky row at the top."
+    }
+  ],
+  "images": {
+    "iphone_hero": {
+      "url": "https://images.unsplash.com/photo-1709178294947-42963a9a33b8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwxfHxpcGhvbmUlMjAxNSUyMHBybyUyMGRhcmslMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4NTA3OTcxNnww&ixlib=rb-4.1.0&q=85",
+      "alt": "iPhone 15 Pro on dark background"
+    },
+    "macbook_product": {
+      "url": "https://images.pexels.com/photos/11621727/pexels-photo-11621727.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Sleek Macbook Pro on a dark surface"
+    },
+    "sony_tv_product": {
+      "url": "https://images.pexels.com/photos/5202925/pexels-photo-5202925.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Smart TV in a minimalist living room"
+    },
+    "playstation_5": {
+      "url": "https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHwxfHxwbGF5c3RhdGlvbiUyMDUlMjBjb25zb2xlfGVufDB8fHx8MTc4NTA3OTczMHww&ixlib=rb-4.1.0&q=85",
+      "alt": "Playstation 5 console"
+    },
+    "abstract_splash_bg": {
+      "url": "https://images.unsplash.com/photo-1532190872407-280735d27e08?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGRhcmslMjBnbGFzcyUyMGdlb21ldHJpYyUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzg1MDc5NzE2fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract dark glass geometric background"
+    },
+    "apple_logo": {
+      "url": "https://images.pexels.com/photos/9635254/pexels-photo-9635254.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Apple logo"
+    },
+    "sony_logo": {
+      "url": "https://images.pexels.com/photos/4219929/pexels-photo-4219929.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Sony Playstation logo"
+    },
+    "samsung_logo": {
+      "url": "https://images.pexels.com/photos/14770618/pexels-photo-14770618.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Samsung logo on remote"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow the '6 Glass / Luxe DARK' personality strictly. Do not use pure black backgrounds; use the provided #0a0a0a obsidian and #151515 secondary surface.",
+    "Implement the EMI calculator using a bottom sheet component with glassmorphic styling for the header.",
+    "Ensure the EMI Schedule timeline uses sharp, data-first typography (Dark-First Utility fusion) to make numbers highly legible, and use #10b981 (Emerald) specifically for 'Paid' or 'Approved' statuses.",
+    "Apply gradient scrims (transparent to #0a0a0a) over all edge-to-edge product images so overlaying white text remains readable.",
+    "Buttons should be stark white (brandPrimary) with black text for a minimalist premium feel, rather than using colored CTA buttons.",
+    "Build three distinct role-based navigation flows (Customer, Admin, Inventory) separated by authentication state."
+  ],
+  "haptics": {
+    "tab_press": "light",
+    "emi_tenure_select": "medium",
+    "add_to_cart": "heavy",
+    "approve_emi_admin": "success"
+  }
+}
