@@ -520,15 +520,15 @@ async def pay_installment(aid: str, installment: int, user=Depends(get_current_u
 
     all_paid = all(s['status'] == 'paid' for s in schedule)
     updates: Dict[str, Any] = {'schedule': schedule}
+    per = a['principal'] / a['tenure_months']
     if all_paid:
         updates['status'] = 'completed'; updates['completed_at'] = now_iso()
-        # Restore credit limit + bump score
+        # Restore this installment's share + bump score for successful completion
         await db.users.update_one({'id': user['id']}, {
-            '$inc': {'available_limit': a['principal'], 'used_limit': -a['principal'], 'credit_score': 15}
+            '$inc': {'available_limit': per, 'used_limit': -per, 'credit_score': 15}
         })
     else:
-        # Partial restore for on-time payment
-        per = a['principal'] / a['tenure_months']
+        # On-time payment: restore this installment's share of principal
         await db.users.update_one({'id': user['id']}, {'$inc': {'available_limit': per, 'used_limit': -per}})
     await db.emi_applications.update_one({'id': aid}, {'$set': updates})
     return {'ok': True, 'completed': all_paid}
