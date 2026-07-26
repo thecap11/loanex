@@ -74,6 +74,9 @@ export default function EmiAppDetail() {
           <Row l="Loan Principal" v={formatINR(app.principal)} />
           <Row l="Total Interest" v={formatINR(app.total_interest)} warn />
           <Row l="Processing Fee" v={formatINR(app.processing_fee)} />
+          {app.custom_charges && app.custom_charges.map((c: any, i: number) => (
+            <Row key={i} l={c.label} v={formatINR(c.amount)} warn />
+          ))}
           <View style={styles.divider} />
           <Row l="Monthly EMI" v={formatINR(app.monthly_emi)} bold />
           <Row l="Total Payable" v={formatINR(app.total_payable)} />

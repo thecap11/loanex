@@ -38,7 +38,7 @@ export default function ProductDetail() {
   useEffect(() => {
     if (!product || !config) return;
     (async () => {
-      const c = await api(`/emi/calculate?price=${product.price}&tenure=${tenure}`);
+      const c = await api(`/emi/calculate?product_id=${id}&tenure=${tenure}`);
       setEmiCalc(c);
     })();
   }, [product, tenure, config]);
@@ -128,7 +128,7 @@ export default function ProductDetail() {
               </View>
 
               <View style={styles.tenureRow}>
-                {config.tenures.map((t: number) => (
+                {(emiCalc.tenures || config.tenures).map((t: number) => (
                   <Pressable testID={`tenure-${t}`} key={t} style={[styles.tenureBtn, tenure === t && styles.tenureBtnActive]} onPress={() => setTenure(t)}>
                     <Text style={[styles.tenureText, tenure === t && styles.tenureTextActive]}>{t}m</Text>
                   </Pressable>
@@ -140,6 +140,18 @@ export default function ProductDetail() {
                 <View style={styles.emiStat}><Text style={styles.emiStatLabel}>Monthly</Text><Text style={[styles.emiStatVal, { color: colors.gold }]}>{formatINR(emiCalc.monthly)}</Text></View>
                 <View style={styles.emiStat}><Text style={styles.emiStatLabel}>Interest</Text><Text style={[styles.emiStatVal, { color: colors.warning }]}>{formatINR(emiCalc.total_interest)}</Text></View>
               </View>
+
+              {emiCalc.custom_charges && emiCalc.custom_charges.length > 0 && (
+                <View style={styles.chargesList}>
+                  <Text style={styles.chargesTitle}>Additional Charges</Text>
+                  {emiCalc.custom_charges.map((c: any, i: number) => (
+                    <View key={i} style={styles.chargeRow}>
+                      <Text style={styles.chargeLabel}>{c.label}</Text>
+                      <Text style={styles.chargeAmt}>{formatINR(c.amount)}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
           )}
 
@@ -229,6 +241,11 @@ const styles = StyleSheet.create({
   emiStatLabel: { color: colors.textDim, fontSize: fs.sm },
   emiStatVal: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginTop: 2 },
   reviews: { marginTop: spacing.xl },
+  chargesList: { marginTop: spacing.md, padding: spacing.md, backgroundColor: colors.bg3, borderRadius: radius.sm },
+  chargesTitle: { color: colors.gold, fontSize: fs.sm, fontWeight: '700', marginBottom: 4, letterSpacing: 1 },
+  chargeRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
+  chargeLabel: { color: colors.text },
+  chargeAmt: { color: colors.text, fontWeight: '700' },
   reviewsTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.md },
   reviewCard: { padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
   reviewer: { color: colors.text, fontWeight: '700' },

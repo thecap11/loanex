@@ -24,6 +24,7 @@ export default function AdminLayout() {
       <Tabs.Screen name="emis" options={{ title: 'EMIs', tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} /> }} />
       <Tabs.Screen name="users" options={{ title: 'Users', tabBarIcon: ({ color, size }) => <Ionicons name="people" size={size} color={color} /> }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: ({ color, size }) => <Ionicons name="settings" size={size} color={color} /> }} />
+      <Tabs.Screen name="emi/[id]" options={{ href: null }} />
     </Tabs>
   );
 }

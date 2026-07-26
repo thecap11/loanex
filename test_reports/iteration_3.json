@@ -1,0 +1,50 @@
+{
+  "summary": "LoanEX iteration 3 backend tested: per-product EMI overrides + enriched admin review + enhanced sanction. Created /app/backend/tests/test_emi_overrides.py with 19 new tests, ALL 19 PASSED. Regression suite (/app/backend/tests/backend_test.py, 42 tests) also re-run and ALL PASSED. Total 61/61 passing. Coverage of iteration 3: (1) POST /api/products with emi_overrides (admin only, customer 403). (2) GET /api/emi/calculate with product_id uses overrides — verified interest_rate/down_payment_percent/processing_fee/tenures come from override, custom_charges resolved (percent 5% of 80000 = 4000, fixed 1500), custom_charges_total = 5500, total_payable includes charges. (3) GET /api/emi/calculate?price=... uses global config with empty custom_charges & non-null tenures. (4) product with NO emi_overrides falls back to global (interest/dp/fee/tenures match /api/emi/config). (5) GET /api/emi/calculate?product_id=nonexistent → 404. (6) POST /api/emi/apply on product-with-overrides snapshots effective schema (interest 9.5, dp 12000 = 15% of 80000, principal 68000, processing_fee 999, custom_charges list of 2) AND enriches doc with user_phone, user_approved_limit, user_available_limit, user_used_limit, user_kyc (aadhar/pan/income), user_stats {active_emis, completed_emis, rejected_emis} (all zero for fresh customer). (7) Invalid tenure per override (24 not in [3,6,9,12]) → 400. (8) GET /api/admin/emi/applications/{id} returns fresh user_stats AND user_current (credit_score, approved_limit, available_limit, used_limit, kyc_status, phone). (9) Admin detail on nonexistent id → 404. (10) POST /api/admin/emi/applications/{id}/sanction with financial overrides recomputes monthly_emi/principal/total_interest/total_payable/custom_charges and sets admin_edited=true; verified 6% rate + 20000 dp + 250 fee + [GST 2%=1600, Handling 300 fixed] → principal 60000, total_payable > baseline, admin_edited=True. (11) Sanction with only notes leaves ALL financials unchanged AND does NOT set admin_edited. (12) Sanction on non-pending (already sanctioned) → 400. (13) RBAC: customer & inventory_manager both 403 on GET admin detail and POST sanction. (14) No Mongo _id leaks (recursive check on every response). Fresh customers registered per-test to isolate user_stats assertions. External URL: https://flex-pay-store-1.preview.emergentagent.com/api.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/emi/applications/{id}/sanction", "issue": "When body.down_payment_amount is provided, the recomputed cfg forces down_payment_percent=0 which is correct, but the persisted document keeps a stale down_payment_percent field only if it was set elsewhere. Not a functional bug, just noted."},
+      {"endpoint": "POST /api/products with emi_overrides", "issue": "No schema validation on emi_overrides subfields — an admin can send e.g. {interest_rate: 'not-a-number', custom_charges: 'string'} and it will be stored raw (fails only at calculate time). Consider a Pydantic sub-model for EMIOverrides."},
+      {"endpoint": "POST /api/admin/emi/applications/{id}/sanction (notes-only)", "issue": "Correct behaviour verified — but sanction never records the original snapshot vs edited delta anywhere. If audit trail is required, add {previous_financials:{...}} on admin_edited=true."},
+      {"endpoint": "POST /api/emi/apply", "issue": "user_kyc is snapshotted from user.get('kyc') — verify aadhar/pan are needed downstream unmasked; may want to store masked copy for admin display (carry-over minor from prev iteration)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_emi_overrides.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_iteration3.xml"
+  ],
+  "action_items": [
+    "(Optional) Add a Pydantic sub-model for ProductIn.emi_overrides so invalid types are rejected at 422 instead of at calc time.",
+    "(Optional) Persist previous_financials on sanction-with-overrides for an audit trail.",
+    "(Carry-over) Fix credit-limit restore math in pay_installment double-restore, mask KYC on /kyc/me, validate aadhar/pan/monthly_income, enforce expires_at on applications, validate OrderIn address, restock quantity > 0 — all reported in iteration_2."
+  ],
+  "critical_code_review_comments": [
+    "effective_config() correctly merges only truthy override keys; falsy 0 (e.g. down_payment_percent=0) would be respected — good.",
+    "compute_emi_financials() uses dp_override for absolute rupees path, keeping percent path clean — clean separation.",
+    "resolve_charges rounds each amount to 2 decimals but sums pre-round; if many percent charges are used, could accumulate 0.005 rupee drift. Very minor.",
+    "sanction() only sets admin_edited=True when needs_recalc is True — matches spec that notes-only sanction should NOT set admin_edited.",
+    "admin_app_detail freshens user_stats & attaches user_current (with password projected out) — clean.",
+    "server.py now ~793 lines — still above 700 threshold. Recommend splitting routers as previously flagged.",
+    "All admin/EMI/product endpoints project {'_id': 0} — no Mongo _id leaks detected across all 61 tests.",
+    "Sanction endpoint doesn't validate custom_charges shape (label/amount/type) — resolve_charges is defensive (defaults label='Charge', type='fixed') so this is graceful but silent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_emi_overrides.py (new, 19 tests)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated, 61 tests)",
+    "/app/test_reports/pytest/pytest_iteration3.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (61 passed, 0 failed — 42 regression + 19 iteration-3)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "test_emi_overrides.py creates 2 TEST_ prefixed products per run (one with overrides, one plain) and several TEST_ovr_* customers (each with KYC + address + 1 pending app). Products & applications accumulate under TEST_ prefix — no cleanup endpoint but assertions are self-scoped so runs are idempotent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Two test files now live under /app/backend/tests/: backend_test.py (LoanEX v2 regression) and test_emi_overrides.py (iteration 3 features). Run `pytest backend/tests/ -v --dist=loadscope` — pytest-xdist is configured via pytest.ini. All EMI override math (percent custom charge = pct * total_price, principal = total_price - down_payment) is validated. If iteration 4 adds fields, extend test_emi_overrides.py rather than backend_test.py. External URL from EXPO_PUBLIC_BACKEND_URL env var (default https://flex-pay-store-1.preview.emergentagent.com/api). Fresh customer registration defaults: credit_score=650, approved_limit=50000; after KYC with monthly_income=100000: score=650+min(9,10)*20=810 (or capped 900) and approved_limit=min(monthly_income*6, cap). Snapshotted user_stats {active_emis, completed_emis, rejected_emis} are all 0 for a fresh customer's first application. sanction() sets admin_edited=True ONLY when any of interest_rate/down_payment_amount/processing_fee/custom_charges are provided.",
+  "rca_of_issue": "N/A — no backend bugs in iteration 3 features. Every endpoint, override merge, financial recompute, RBAC guard, and _id projection behaved as specified."
+}

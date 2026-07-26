@@ -41,7 +41,7 @@ export default function EmiApply() {
 
   useEffect(() => {
     if (!product) return;
-    (async () => setEmiCalc(await api(`/emi/calculate?price=${product.price}&tenure=${tenure}`)))();
+    (async () => setEmiCalc(await api(`/emi/calculate?product_id=${id}&tenure=${tenure}`)))();
   }, [product, tenure]);
 
   const submit = async () => {
@@ -91,7 +91,7 @@ export default function EmiApply() {
         {/* Tenure */}
         <Text style={styles.section}>Select Tenure</Text>
         <View style={styles.tenureRow}>
-          {config.tenures.map((t: number) => (
+          {(emiCalc.tenures || config.tenures).map((t: number) => (
             <Pressable testID={`apply-tenure-${t}`} key={t} style={[styles.tBtn, tenure === t && styles.tBtnActive]} onPress={() => setTenure(t)}>
               <Text style={[styles.tText, tenure === t && { color: colors.black }]}>{t}</Text>
               <Text style={[styles.tSub, tenure === t && { color: colors.black }]}>months</Text>
@@ -103,10 +103,13 @@ export default function EmiApply() {
         <Text style={styles.section}>Financial Summary</Text>
         <View style={styles.summary}>
           <Row label="Product Price" value={formatINR(product.price)} />
-          <Row label="Down Payment (20%)" value={formatINR(emiCalc.down_payment)} accent />
+          <Row label={`Down Payment (${((emiCalc.down_payment / product.price) * 100).toFixed(0)}%)`} value={formatINR(emiCalc.down_payment)} accent />
           <Row label="Loan Principal" value={formatINR(emiCalc.principal)} />
           <Row label={`Interest @ ${emiCalc.interest_rate}% APR`} value={formatINR(emiCalc.total_interest)} warn />
           <Row label="Processing Fee" value={formatINR(emiCalc.processing_fee)} />
+          {emiCalc.custom_charges && emiCalc.custom_charges.map((c: any, i: number) => (
+            <Row key={i} label={c.label} value={formatINR(c.amount)} warn />
+          ))}
           <View style={styles.divider} />
           <Row label="Monthly EMI" value={formatINR(emiCalc.monthly)} bold />
           <Row label="Total Payable" value={formatINR(emiCalc.total_payable)} />

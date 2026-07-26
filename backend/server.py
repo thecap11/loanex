@@ -51,6 +51,7 @@ class ProductIn(BaseModel):
     emi_eligible: bool = True
     specifications: Optional[Dict[str, str]] = None
     tags: Optional[List[str]] = None
+    emi_overrides: Optional[Dict[str, Any]] = None  # {interest_rate, tenures, down_payment_percent, processing_fee, custom_charges}
 
 class CartItemIn(BaseModel):
     product_id: str
@@ -88,7 +89,10 @@ class EMIApplyIn(BaseModel):
 
 class EMISanctionIn(BaseModel):
     notes: str = ''
-    interest_rate: Optional[float] = None  # override if needed
+    interest_rate: Optional[float] = None
+    down_payment_amount: Optional[float] = None  # absolute rupees, overrides percentage
+    processing_fee: Optional[float] = None
+    custom_charges: Optional[List[Dict[str, Any]]] = None  # [{label, amount, type: 'fixed'|'percent'}]
 
 class EMIRejectIn(BaseModel):
     reason: str
@@ -148,6 +152,49 @@ def calc_emi(principal: float, months: int, annual_rate: float):
     else: monthly = principal * r * ((1 + r) ** months) / (((1 + r) ** months) - 1)
     total = monthly * months
     return round(monthly, 2), round(total, 2)
+
+def effective_config(product: Optional[dict], global_cfg: dict) -> dict:
+    """Merge product-level EMI overrides with global config."""
+    eff = dict(global_cfg)
+    if product and product.get('emi_overrides'):
+        ov = product['emi_overrides']
+        for k in ('interest_rate', 'tenures', 'down_payment_percent', 'processing_fee', 'custom_charges'):
+            if ov.get(k) is not None:
+                eff[k] = ov[k]
+    if 'custom_charges' not in eff or eff.get('custom_charges') is None:
+        eff['custom_charges'] = []
+    return eff
+
+def resolve_charges(price: float, custom_charges: Optional[List[dict]]) -> tuple:
+    """Return (total_extra_charges, resolved_list)."""
+    resolved: List[dict] = []
+    total = 0.0
+    for c in (custom_charges or []):
+        amt = float(c.get('amount') or 0)
+        if c.get('type') == 'percent':
+            amt = price * amt / 100
+        resolved.append({'label': c.get('label', 'Charge'), 'amount': round(amt, 2), 'type': c.get('type', 'fixed')})
+        total += amt
+    return round(total, 2), resolved
+
+def compute_emi_financials(price: float, tenure: int, cfg: dict, dp_override: Optional[float] = None) -> dict:
+    dp = dp_override if dp_override is not None else price * cfg['down_payment_percent'] / 100
+    dp = max(0.0, min(dp, price))
+    principal = price - dp
+    monthly, total = calc_emi(principal, tenure, cfg['interest_rate'])
+    charges_total, resolved_charges = resolve_charges(price, cfg.get('custom_charges'))
+    fee = cfg.get('processing_fee', 0.0)
+    total_payable = dp + total + fee + charges_total
+    return {
+        'price': round(price, 2), 'tenure': tenure,
+        'interest_rate': cfg['interest_rate'],
+        'down_payment_percent': cfg.get('down_payment_percent', 0),
+        'down_payment': round(dp, 2), 'principal': round(principal, 2),
+        'monthly': monthly, 'total_interest': round(total - principal, 2),
+        'processing_fee': round(fee, 2),
+        'custom_charges': resolved_charges, 'custom_charges_total': charges_total,
+        'total_payable': round(total_payable, 2),
+    }
 
 def user_out(u: dict) -> dict:
     return {k: u.get(k) for k in ['id', 'email', 'name', 'phone', 'role', 'kyc_status', 'credit_score', 'approved_limit', 'available_limit', 'used_limit', 'created_at']}
@@ -326,19 +373,20 @@ async def update_emi_config(body: EMIConfigIn, user=Depends(require_role('admin'
     return body.dict()
 
 @api.get('/emi/calculate')
-async def emi_calc(price: float, tenure: int):
-    cfg = await get_emi_config()
-    dp = price * cfg['down_payment_percent'] / 100
-    principal = price - dp
-    monthly, total = calc_emi(principal, tenure, cfg['interest_rate'])
-    total_payable = dp + total + cfg['processing_fee']
-    return {
-        'price': price, 'tenure': tenure, 'interest_rate': cfg['interest_rate'],
-        'down_payment': round(dp, 2), 'principal': round(principal, 2),
-        'monthly': monthly, 'total_interest': round(total - principal, 2),
-        'processing_fee': cfg['processing_fee'], 'total_payable': round(total_payable, 2),
-        'eligible': price >= cfg['threshold'], 'threshold': cfg['threshold'],
-    }
+async def emi_calc(price: Optional[float] = None, tenure: int = 6, product_id: Optional[str] = None):
+    global_cfg = await get_emi_config()
+    product = None
+    if product_id:
+        product = await db.products.find_one({'id': product_id}, {'_id': 0})
+        if not product: raise HTTPException(404, 'Product not found')
+        if price is None: price = product['price']
+    if price is None: raise HTTPException(400, 'price or product_id required')
+    cfg = effective_config(product, global_cfg)
+    result = compute_emi_financials(price, tenure, cfg)
+    result['eligible'] = price >= global_cfg['threshold']
+    result['threshold'] = global_cfg['threshold']
+    result['tenures'] = cfg.get('tenures', global_cfg['tenures'])
+    return result
 
 # ---------- Cart ----------
 @api.get('/cart')
@@ -423,30 +471,41 @@ async def apply_emi(body: EMIApplyIn, user=Depends(get_current_user)):
     if not p: raise HTTPException(404, 'Product not found')
     if p['stock'] < body.qty: raise HTTPException(400, 'Insufficient stock')
     if not p.get('emi_eligible', True): raise HTTPException(400, 'EMI not available for this product')
-    cfg = await get_emi_config()
+    global_cfg = await get_emi_config()
+    cfg = effective_config(p, global_cfg)
     if body.tenure_months not in cfg['tenures']: raise HTTPException(400, 'Invalid tenure')
     total_price = p['price'] * body.qty
-    if total_price < cfg['threshold']: raise HTTPException(400, f'Order below EMI threshold ₹{cfg["threshold"]}')
+    if total_price < global_cfg['threshold']: raise HTTPException(400, f'Order below EMI threshold ₹{global_cfg["threshold"]}')
     if total_price > user.get('available_limit', 0): raise HTTPException(400, f'Insufficient credit limit. Available: ₹{user.get("available_limit", 0)}')
 
-    dp = total_price * cfg['down_payment_percent'] / 100
-    principal = total_price - dp
-    monthly, total_int_pay = calc_emi(principal, body.tenure_months, cfg['interest_rate'])
+    fin = compute_emi_financials(total_price, body.tenure_months, cfg)
 
     addr = await db.addresses.find_one({'id': body.address_id, 'user_id': user['id']}, {'_id': 0})
     if not addr: raise HTTPException(400, 'Address not found')
 
+    # snapshot customer profile for admin review
+    prior_completed = await db.emi_applications.count_documents({'user_id': user['id'], 'status': 'completed'})
+    prior_active = await db.emi_applications.count_documents({'user_id': user['id'], 'status': 'active'})
+    prior_rejected = await db.emi_applications.count_documents({'user_id': user['id'], 'status': 'rejected'})
+
     app_doc = {
         'id': str(uuid.uuid4()), 'user_id': user['id'], 'user_name': user['name'], 'user_email': user['email'],
+        'user_phone': user.get('phone'),
         'user_score': user.get('credit_score', 500),
-        'product': {'id': p['id'], 'name': p['name'], 'image': p['image'], 'brand': p['brand']},
+        'user_approved_limit': user.get('approved_limit', 0),
+        'user_available_limit': user.get('available_limit', 0),
+        'user_used_limit': user.get('used_limit', 0),
+        'user_kyc': user.get('kyc'),
+        'user_stats': {'active_emis': prior_active, 'completed_emis': prior_completed, 'rejected_emis': prior_rejected},
+        'product': {'id': p['id'], 'name': p['name'], 'image': p['image'], 'brand': p['brand'], 'price': p['price']},
         'qty': body.qty, 'total_price': round(total_price, 2),
         'tenure_months': body.tenure_months,
-        'down_payment': round(dp, 2), 'principal': round(principal, 2),
-        'interest_rate': cfg['interest_rate'],
-        'monthly_emi': monthly, 'total_interest': round(total_int_pay - principal, 2),
-        'processing_fee': cfg['processing_fee'],
-        'total_payable': round(dp + total_int_pay + cfg['processing_fee'], 2),
+        'down_payment': fin['down_payment'], 'principal': fin['principal'],
+        'interest_rate': fin['interest_rate'],
+        'monthly_emi': fin['monthly'], 'total_interest': fin['total_interest'],
+        'processing_fee': fin['processing_fee'],
+        'custom_charges': fin['custom_charges'],
+        'total_payable': fin['total_payable'],
         'address': addr,
         'status': 'pending',
         'admin_notes': '',
@@ -540,19 +599,57 @@ async def admin_apps(status: Optional[str] = None, user=Depends(require_role('ad
     if status: q['status'] = status
     return await db.emi_applications.find(q, {'_id': 0}).sort('created_at', -1).to_list(500)
 
+@api.get('/admin/emi/applications/{aid}')
+async def admin_app_detail(aid: str, admin=Depends(require_role('admin'))):
+    a = await db.emi_applications.find_one({'id': aid}, {'_id': 0})
+    if not a: raise HTTPException(404)
+    # freshen customer stats
+    prior_completed = await db.emi_applications.count_documents({'user_id': a['user_id'], 'status': 'completed'})
+    prior_active = await db.emi_applications.count_documents({'user_id': a['user_id'], 'status': 'active'})
+    prior_rejected = await db.emi_applications.count_documents({'user_id': a['user_id'], 'status': 'rejected'})
+    a['user_stats'] = {'active_emis': prior_active, 'completed_emis': prior_completed, 'rejected_emis': prior_rejected}
+    # attach current user info in case it changed since application
+    u = await db.users.find_one({'id': a['user_id']}, {'_id': 0, 'password': 0})
+    if u:
+        a['user_current'] = {
+            'credit_score': u.get('credit_score'), 'approved_limit': u.get('approved_limit'),
+            'available_limit': u.get('available_limit'), 'used_limit': u.get('used_limit'),
+            'kyc_status': u.get('kyc_status'), 'phone': u.get('phone'),
+        }
+    return a
+
 @api.post('/admin/emi/applications/{aid}/sanction')
 async def sanction(aid: str, body: EMISanctionIn, admin=Depends(require_role('admin'))):
     a = await db.emi_applications.find_one({'id': aid})
     if not a: raise HTTPException(404)
     if a['status'] != 'pending': raise HTTPException(400, 'Application not pending')
+
     updates: Dict[str, Any] = {'status': 'sanctioned', 'admin_notes': body.notes, 'sanctioned_by': admin['id'], 'sanctioned_at': now_iso()}
-    if body.interest_rate is not None:
-        # recalculate
-        principal = a['principal']
-        monthly, total = calc_emi(principal, a['tenure_months'], body.interest_rate)
-        updates.update({'interest_rate': body.interest_rate, 'monthly_emi': monthly,
-                        'total_interest': round(total - principal, 2),
-                        'total_payable': round(a['down_payment'] + total + a['processing_fee'], 2)})
+
+    # If any financial override was provided, recompute everything
+    needs_recalc = any(x is not None for x in [body.interest_rate, body.down_payment_amount, body.processing_fee, body.custom_charges])
+    if needs_recalc:
+        price = a['total_price']
+        tenure = a['tenure_months']
+        cfg = {
+            'interest_rate': body.interest_rate if body.interest_rate is not None else a['interest_rate'],
+            'down_payment_percent': 0,  # unused when dp_override is passed
+            'processing_fee': body.processing_fee if body.processing_fee is not None else a['processing_fee'],
+            'custom_charges': body.custom_charges if body.custom_charges is not None else a.get('custom_charges', []),
+        }
+        dp_override = body.down_payment_amount if body.down_payment_amount is not None else a['down_payment']
+        fin = compute_emi_financials(price, tenure, cfg, dp_override=dp_override)
+        updates.update({
+            'interest_rate': fin['interest_rate'],
+            'down_payment': fin['down_payment'],
+            'principal': fin['principal'],
+            'monthly_emi': fin['monthly'],
+            'total_interest': fin['total_interest'],
+            'processing_fee': fin['processing_fee'],
+            'custom_charges': fin['custom_charges'],
+            'total_payable': fin['total_payable'],
+            'admin_edited': True,
+        })
     await db.emi_applications.update_one({'id': aid}, {'$set': updates})
     return {'ok': True}
 
