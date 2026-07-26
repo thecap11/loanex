@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
+import { formatINR } from '@/src/utils/currency';
 
 export default function LowStock() {
   const { api } = useAuth();
@@ -38,7 +39,7 @@ export default function LowStock() {
                 <Image source={{ uri: p.image }} style={styles.img} contentFit="cover" />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.name}>{p.name}</Text>
-                  <Text style={styles.meta}>{p.brand} • ${p.price.toFixed(2)}</Text>
+                  <Text style={styles.meta}>{p.brand} • {formatINR(p.price)}</Text>
                   <View style={styles.badge}>
                     <Ionicons name="warning" size={12} color={p.stock === 0 ? colors.error : colors.warning} />
                     <Text style={[styles.badgeText, { color: p.stock === 0 ? colors.error : colors.warning }]}>

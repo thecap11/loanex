@@ -1,0 +1,52 @@
+{
+  "summary": "LoanEX backend fully re-tested after rebrand from Onyx. 42 pytest tests PASSED, 0 failed. Coverage: auth (login for all 3 seed roles, register defaults credit_score=650/limit=50000, /auth/me guard, credit fields on user payload), credit profile (score/tier/limits/utilization/factors), KYC (submit auto-verifies, bumps score based on income, /kyc/me), addresses CRUD with default handling, products/categories with new LoanEX taxonomy (Mobiles/Laptops/TVs/Audio/Gaming/Wearables/Appliances), product reviews (rating 1-5 validation, product rating recompute + review_count), EMI config CRUD + admin RBAC, EMI calculator (down_payment, principal, monthly, total_interest, processing_fee, total_payable, eligible), FULL EMI LIFECYCLE end-to-end (register -> apply-before-KYC-400 -> KYC submit -> add address -> apply pending -> admin sanction -> pay-downpayment activates + creates order + decrements stock + decrements available_limit -> pay all 6 installments -> status=completed + credit score +15), EMI reject flow with reason persisted, direct order via address_text (no more payment_method/emi_tenure fields), admin stats (revenue, users, products, orders, pending/active EMIs, low_stock, 7-day trend array), admin RBAC (customer & inventory forbidden on all /api/admin/*), admin EMI status filter, inventory endpoints + role guards, MongoDB _id leak check on every response (recursive traversal). External URL used: https://flex-pay-store-1.preview.emergentagent.com/api.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/kyc/me", "issue": "When KYC not submitted returns {status: 'not_submitted'} (no other fields). When submitted returns raw kyc dict including aadhar/pan/monthly_income in plain text. Consider masking aadhar/pan (e.g. XXXX XXXX 3333) before returning to client."},
+      {"endpoint": "POST /api/kyc/submit", "issue": "No validation on aadhar (should be 12 digits) or pan (5L+4D+1L). Currently accepts any string like 'P' or '1'. Also monthly_income has no lower/upper bound."},
+      {"endpoint": "POST /api/emi/applications/{aid}/pay/{n}", "issue": "Partial per-installment credit restore uses principal/tenure but bulk-completion also does full principal restore via $inc — this can over-restore available_limit for a completed EMI (each installment restored per portion + final does full principal). Verify: after all installments, used_limit could go slightly negative. Consider computing remaining_to_restore = principal - already_restored on completion."},
+      {"endpoint": "POST /api/products/{id}/restock", "issue": "Uses $inc without validating quantity > 0; a negative quantity would silently reduce stock (carried over from prior iteration)."},
+      {"endpoint": "POST /api/orders", "issue": "OrderIn requires either address_id or address_text but no validation asserts at least one is provided; a request with neither would create an order with address=None."},
+      {"endpoint": "POST /api/emi/apply", "issue": "The 'expires_at' field is set to +30 days but there is no scheduled task or check that transitions expired pending applications; sanction can still succeed after expiry."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional / security) Mask aadhar & PAN in /api/kyc/me response.",
+    "(Optional / validation) Add regex validation for aadhar (12 digits) and PAN (5 letters + 4 digits + 1 letter) on KycIn.",
+    "(Optional / correctness) Fix credit-limit restore math in pay_installment so completion doesn't double-restore already-restored partial amounts.",
+    "(Optional) Validate quantity > 0 on /api/products/{id}/restock.",
+    "(Optional) Validate that OrderIn has either address_id or address_text (currently both optional, both may be null).",
+    "(Optional) Enforce expires_at on EMI applications before allowing sanction."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~700 lines. Approaching the split threshold; consider grouping routers (auth/kyc/credit/addresses/products/reviews/emi/admin/inventory) into separate modules for maintainability.",
+    "All mongo reads correctly project out `_id` via {'_id': 0} — verified recursively across every tested response. Good.",
+    "JWT_SECRET falls back to hard-coded default in code — fine for demo but flag before prod.",
+    "get_current_user projects out password — good.",
+    "No pagination on /api/admin/orders /api/admin/users /api/admin/emi/applications (500 cap). Acceptable for demo.",
+    "calc_emi returns (monthly, total_of_all_installments). In /api/emi/calculate the caller subtracts principal for total_interest — correct. In apply_emi it does the same. Naming of 'total_int_pay' is misleading (it's total repayment, not just interest).",
+    "@app.on_event('startup') and 'shutdown' are deprecated in FastAPI ≥0.109; consider migrating to lifespan context manager.",
+    "CORS is set to allow_origins=['*'] — expected for demo."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (rewritten for LoanEX)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (42 passed, 0 failed)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Each run registers ephemeral TEST_-prefixed customers (register + KYC + address). No cleanup endpoint exposed; docs accumulate under TEST_ prefix. Also creates TEST reviews on first product; product rating/review_count grows across runs but never breaks assertions (uses >= checks).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use pytest with --dist=loadscope so TestEMILifecycle stays on one xdist worker (the session-scoped fresh_customer fixture is per-worker; the ordered test_00..test_11 methods rely on state on the fixture dict). External URL from EXPO_PUBLIC_BACKEND_URL. Seed accounts: admin@loanex.com/admin123, customer@loanex.com/customer123, inventory@loanex.com/inventory123. Note: customer seed credit_score starts at 720 but grows across test runs (from KYC bumps) — assertions use >= 720. All endpoints under /api prefix. EMI lifecycle: KYC required first, then apply -> pending -> admin sanction -> pay-downpayment (creates order, activates) -> pay/{n} until all -> completed (+15 score).",
+  "rca_of_issue": "N/A — no backend bugs found. Two initial test failures during authoring were test-side issues, both fixed: (1) TestAuth.test_login_customer assumed credit_score exactly 720 but seed customer score had grown to 810 due to prior KYC test runs — relaxed to >= 720. (2) TestEMIReject relied on session-scoped fresh_customer fixture which under pytest-xdist runs in a different worker than TestEMILifecycle that populated address_id — made TestEMIReject self-contained (registers + KYC + address inside the test)."
+}

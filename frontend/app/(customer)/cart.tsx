@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
+import { formatINR } from '@/src/utils/currency';
 
 export default function Cart() {
   const { api } = useAuth();
@@ -56,7 +57,7 @@ export default function Cart() {
                 <Image source={{ uri: it.product.image }} style={styles.img} contentFit="cover" />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName} numberOfLines={2}>{it.product.name}</Text>
-                  <Text style={styles.itemPrice}>${it.product.price.toFixed(2)}</Text>
+                  <Text style={styles.itemPrice}>{formatINR(it.product.price)}</Text>
                   <View style={styles.qtyRow}>
                     <Pressable testID={`qty-dec-${it.product.id}`} style={styles.qtyBtn} onPress={() => it.qty > 1 && changeQty(it.product.id, -1)}>
                       <Ionicons name="remove" size={16} color={colors.text} />
@@ -76,7 +77,7 @@ export default function Cart() {
           <View style={[styles.footer, { paddingBottom: 88 + insets.bottom }]}>
             <View>
               <Text style={styles.totalLabel}>Total</Text>
-              <Text testID="cart-total" style={styles.total}>${total.toFixed(2)}</Text>
+              <Text testID="cart-total" style={styles.total}>{formatINR(total)}</Text>
             </View>
             <Pressable testID="checkout-btn" style={styles.checkoutBtn} onPress={() => router.push('/checkout')}>
               <Text style={styles.checkoutText}>Checkout</Text>

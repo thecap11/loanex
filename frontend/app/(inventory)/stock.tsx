@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
+import { formatINR } from '@/src/utils/currency';
 
 export default function InventoryStock() {
   const { api } = useAuth();
@@ -66,7 +67,7 @@ export default function InventoryStock() {
               <Image source={{ uri: p.image }} style={styles.img} contentFit="cover" />
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{p.name}</Text>
-                <Text style={styles.meta}>{p.brand} • ${p.price.toFixed(2)}</Text>
+                <Text style={styles.meta}>{p.brand} • {formatINR(p.price)}</Text>
                 <View style={styles.stockPill}>
                   <View style={[styles.dot, { backgroundColor: p.stock === 0 ? colors.error : p.stock < 5 ? colors.warning : colors.success }]} />
                   <Text style={styles.stockText}>Stock: {p.stock}</Text>

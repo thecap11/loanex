@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
@@ -13,6 +12,8 @@ export default function AdminSettings() {
   const [rate, setRate] = useState('');
   const [threshold, setThreshold] = useState('');
   const [tenures, setTenures] = useState('');
+  const [dp, setDp] = useState('');
+  const [fee, setFee] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -22,6 +23,8 @@ export default function AdminSettings() {
     setRate(String(c.interest_rate));
     setThreshold(String(c.threshold));
     setTenures(c.tenures.join(','));
+    setDp(String(c.down_payment_percent));
+    setFee(String(c.processing_fee));
   }, [api]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -35,6 +38,8 @@ export default function AdminSettings() {
           interest_rate: parseFloat(rate),
           threshold: parseFloat(threshold),
           tenures: tenures.split(',').map((s) => parseInt(s.trim())).filter((n) => !isNaN(n)),
+          down_payment_percent: parseFloat(dp),
+          processing_fee: parseFloat(fee),
         }),
       });
       setMsg('Saved successfully');
@@ -45,17 +50,19 @@ export default function AdminSettings() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, padding: spacing.xl, paddingBottom: 100 }}>
       <Text style={styles.title}>EMI Configuration</Text>
-      <Text style={styles.sub}>Control the EMI system across the store</Text>
+      <Text style={styles.sub}>Control the EMI engine across the store</Text>
 
       {!cfg ? <ActivityIndicator color={colors.white} style={{ marginTop: 40 }} /> : (
         <>
           <Text style={styles.label}>Annual Interest Rate (%)</Text>
           <TextInput testID="cfg-rate" style={styles.input} value={rate} onChangeText={setRate} keyboardType="decimal-pad" />
-
-          <Text style={styles.label}>Minimum Order Amount for EMI ($)</Text>
+          <Text style={styles.label}>Down Payment (%)</Text>
+          <TextInput testID="cfg-dp" style={styles.input} value={dp} onChangeText={setDp} keyboardType="decimal-pad" />
+          <Text style={styles.label}>Processing Fee (₹)</Text>
+          <TextInput testID="cfg-fee" style={styles.input} value={fee} onChangeText={setFee} keyboardType="decimal-pad" />
+          <Text style={styles.label}>Minimum Order for EMI (₹)</Text>
           <TextInput testID="cfg-threshold" style={styles.input} value={threshold} onChangeText={setThreshold} keyboardType="decimal-pad" />
-
-          <Text style={styles.label}>Available Tenures (months, comma-separated)</Text>
+          <Text style={styles.label}>Tenures (months, comma-separated)</Text>
           <TextInput testID="cfg-tenures" style={styles.input} value={tenures} onChangeText={setTenures} />
 
           <Pressable testID="cfg-save" style={styles.btn} onPress={save} disabled={busy}>

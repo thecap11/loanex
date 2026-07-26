@@ -6,8 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
+import { formatINR } from '@/src/utils/currency';
 
-const CATS = ['Phones', 'Laptops', 'TVs', 'Audio', 'Gaming', 'Wearables'];
+const CATS = ['Mobiles', 'Laptops', 'TVs', 'Audio', 'Gaming', 'Wearables', 'Appliances'];
 
 export default function AdminProducts() {
   const { api } = useAuth();
@@ -16,7 +17,7 @@ export default function AdminProducts() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState<any>({ name: '', brand: '', category: 'Phones', price: '', description: '', image: '', stock: '' });
+  const [form, setForm] = useState<any>({ name: '', brand: '', category: 'Mobiles', price: '', description: '', image: '', stock: '' });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -25,7 +26,7 @@ export default function AdminProducts() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const openAdd = () => { setEditing(null); setForm({ name: '', brand: '', category: 'Phones', price: '', description: '', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=940', stock: '10' }); setModalOpen(true); };
+  const openAdd = () => { setEditing(null); setForm({ name: '', brand: '', category: 'Mobiles', price: '', description: '', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=940', stock: '10' }); setModalOpen(true); };
   const openEdit = (p: any) => { setEditing(p); setForm({ ...p, price: String(p.price), stock: String(p.stock) }); setModalOpen(true); };
 
   const save = async () => {
@@ -60,7 +61,7 @@ export default function AdminProducts() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{p.name}</Text>
                 <Text style={styles.brand}>{p.brand} • {p.category}</Text>
-                <Text style={styles.price}>${p.price.toFixed(2)} • Stock: {p.stock}</Text>
+                <Text style={styles.price}>{formatINR(p.price)} • Stock: {p.stock}</Text>
               </View>
               <Pressable style={styles.actionBtn} onPress={() => openEdit(p)}><Ionicons name="pencil" size={16} color={colors.text} /></Pressable>
               <Pressable style={[styles.actionBtn, { backgroundColor: 'rgba(239,68,68,0.15)' }]} onPress={() => del(p.id)}><Ionicons name="trash" size={16} color={colors.error} /></Pressable>
@@ -87,7 +88,7 @@ export default function AdminProducts() {
                   </Pressable>
                 ))}
               </ScrollView>
-              <Field label="Price ($)" value={form.price} onChange={(v: string) => setForm({ ...form, price: v })} kb="decimal-pad" tid="pf-price" />
+              <Field label="Price (₹)" value={form.price} onChange={(v: string) => setForm({ ...form, price: v })} kb="decimal-pad" tid="pf-price" />
               <Field label="Stock" value={form.stock} onChange={(v: string) => setForm({ ...form, stock: v })} kb="number-pad" tid="pf-stock" />
               <Field label="Image URL" value={form.image} onChange={(v: string) => setForm({ ...form, image: v })} tid="pf-image" />
               <Field label="Description" value={form.description} onChange={(v: string) => setForm({ ...form, description: v })} multi tid="pf-desc" />

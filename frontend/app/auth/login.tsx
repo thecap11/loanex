@@ -20,9 +20,7 @@ export default function Login() {
       if (u.role === 'admin') router.replace('/(admin)/dashboard');
       else if (u.role === 'inventory_manager') router.replace('/(inventory)/stock');
       else router.replace('/(customer)/home');
-    } catch (e: any) {
-      setErr(e.message);
-    } finally { setBusy(false); }
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
   const quickFill = (e: string, p: string) => { setEmail(e); setPassword(p); };
@@ -32,35 +30,18 @@ export default function Login() {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.brandRow}>
           <View style={styles.logoDot} />
-          <Text style={styles.brand}>ONYX</Text>
+          <Text style={styles.brand}>LOANEX</Text>
         </View>
         <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.sub}>Sign in to your premium electronics account</Text>
+        <Text style={styles.sub}>Sign in to your Instant EMI account</Text>
 
         <View style={styles.field}>
           <Ionicons name="mail-outline" size={18} color={colors.textDim} />
-          <TextInput
-            testID="login-email-input"
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
+          <TextInput testID="login-email-input" style={styles.input} placeholder="Email" placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
         </View>
         <View style={styles.field}>
           <Ionicons name="lock-closed-outline" size={18} color={colors.textDim} />
-          <TextInput
-            testID="login-password-input"
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={colors.textMuted}
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+          <TextInput testID="login-password-input" style={styles.input} placeholder="Password" placeholderTextColor={colors.textMuted} secureTextEntry value={password} onChangeText={setPassword} />
         </View>
 
         {err && <Text testID="login-error" style={styles.error}>{err}</Text>}
@@ -78,17 +59,17 @@ export default function Login() {
 
         <View style={styles.demoBox}>
           <Text style={styles.demoTitle}>Quick Demo Access</Text>
-          <Pressable testID="demo-customer" style={styles.demoRow} onPress={() => quickFill('customer@onyx.com', 'customer123')}>
+          <Pressable testID="demo-customer" style={styles.demoRow} onPress={() => quickFill('customer@loanex.com', 'customer123')}>
             <Ionicons name="person-outline" color={colors.text} size={16} />
-            <Text style={styles.demoText}>Customer: customer@onyx.com / customer123</Text>
+            <Text style={styles.demoText}>Customer: customer@loanex.com / customer123</Text>
           </Pressable>
-          <Pressable testID="demo-admin" style={styles.demoRow} onPress={() => quickFill('admin@onyx.com', 'admin123')}>
+          <Pressable testID="demo-admin" style={styles.demoRow} onPress={() => quickFill('admin@loanex.com', 'admin123')}>
             <Ionicons name="shield-checkmark-outline" color={colors.gold} size={16} />
-            <Text style={styles.demoText}>Admin: admin@onyx.com / admin123</Text>
+            <Text style={styles.demoText}>Admin: admin@loanex.com / admin123</Text>
           </Pressable>
-          <Pressable testID="demo-inventory" style={styles.demoRow} onPress={() => quickFill('inventory@onyx.com', 'inventory123')}>
+          <Pressable testID="demo-inventory" style={styles.demoRow} onPress={() => quickFill('inventory@loanex.com', 'inventory123')}>
             <Ionicons name="cube-outline" color={colors.success} size={16} />
-            <Text style={styles.demoText}>Inventory: inventory@onyx.com / inventory123</Text>
+            <Text style={styles.demoText}>Inventory: inventory@loanex.com / inventory123</Text>
           </Pressable>
         </View>
       </ScrollView>

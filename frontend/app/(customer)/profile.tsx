@@ -10,10 +10,7 @@ export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const doLogout = async () => {
-    await logout();
-    router.replace('/auth/login');
-  };
+  const doLogout = async () => { await logout(); router.replace('/auth/login'); };
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, paddingBottom: 100 }}>
@@ -23,14 +20,24 @@ export default function Profile() {
         <Text style={styles.name}>{user?.name}</Text>
         <Text style={styles.email}>{user?.email}</Text>
         <View style={styles.roleBadge}><Text style={styles.roleText}>{user?.role.toUpperCase().replace('_', ' ')}</Text></View>
+        {user?.kyc_status === 'verified' && (
+          <View style={styles.kycTag}>
+            <Ionicons name="shield-checkmark" size={12} color={colors.success} />
+            <Text style={styles.kycTagText}>KYC VERIFIED</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Account</Text>
-        <MenuRow icon="location-outline" label="Delivery Addresses" onPress={() => {}} />
-        <MenuRow icon="heart-outline" label="Wishlist" onPress={() => {}} />
-        <MenuRow icon="card-outline" label="Payment Methods" onPress={() => {}} />
-        <MenuRow icon="notifications-outline" label="Notifications" onPress={() => {}} />
+        <MenuRow tid="menu-kyc" icon={user?.kyc_status === 'verified' ? 'shield-checkmark-outline' : 'shield-outline'}
+          label={user?.kyc_status === 'verified' ? 'KYC Verified' : 'Complete KYC'}
+          onPress={() => router.push('/kyc')}
+          tint={user?.kyc_status === 'verified' ? colors.success : colors.gold}
+        />
+        <MenuRow tid="menu-addr" icon="location-outline" label="Delivery Addresses" onPress={() => router.push('/addresses')} />
+        <MenuRow tid="menu-orders" icon="receipt-outline" label="Direct Orders" onPress={() => router.push('/(customer)/orders')} />
+        <MenuRow tid="menu-credit" icon="card-outline" label="Credit Profile" onPress={() => router.push('/(customer)/credit')} />
       </View>
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Support</Text>
@@ -47,11 +54,11 @@ export default function Profile() {
   );
 }
 
-function MenuRow({ icon, label, onPress }: any) {
+function MenuRow({ icon, label, onPress, tint, tid }: any) {
   return (
-    <Pressable style={styles.row} onPress={onPress}>
-      <Ionicons name={icon} size={20} color={colors.text} />
-      <Text style={styles.rowLabel}>{label}</Text>
+    <Pressable testID={tid} style={styles.row} onPress={onPress}>
+      <Ionicons name={icon} size={20} color={tint || colors.text} />
+      <Text style={[styles.rowLabel, tint && { color: tint }]}>{label}</Text>
       <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
     </Pressable>
   );
@@ -67,6 +74,8 @@ const styles = StyleSheet.create({
   email: { color: colors.textDim, marginTop: 2 },
   roleBadge: { marginTop: spacing.md, backgroundColor: colors.bg3, paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.pill },
   roleText: { color: colors.gold, fontSize: fs.sm, fontWeight: '700', letterSpacing: 1 },
+  kycTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.sm },
+  kycTagText: { color: colors.success, fontSize: 10, fontWeight: '700', letterSpacing: 1 },
   section: { marginTop: spacing.xl, paddingHorizontal: spacing.xl },
   sectionTitle: { color: colors.textDim, fontSize: fs.sm, textTransform: 'uppercase', letterSpacing: 1, marginBottom: spacing.sm },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.bg2, padding: spacing.lg, borderRadius: radius.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
