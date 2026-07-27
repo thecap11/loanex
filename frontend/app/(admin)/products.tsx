@@ -1,270 +1,255 @@
-import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Modal, KeyboardAvoidingView, Platform } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, FlatList, Alert, Modal, TextInput } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from '@/src/context/AuthContext';
+import { useAlert } from '@/src/context/AlertContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
 import { formatINR } from '@/src/utils/currency';
-
-const CATS = ['Mobiles', 'Laptops', 'TVs', 'Audio', 'Gaming', 'Wearables', 'Appliances'];
-
-type EmiOverrides = {
-  enabled: boolean;
-  interest_rate: string;
-  down_payment_percent: string;
-  processing_fee: string;
-  tenures: string;
-  custom_charges: { label: string; amount: string; type: 'fixed' | 'percent' }[];
-};
-
-const emptyOverrides: EmiOverrides = { enabled: false, interest_rate: '', down_payment_percent: '', processing_fee: '', tenures: '', custom_charges: [] };
+import { productService } from '@/src/services/productService';
 
 export default function AdminProducts() {
-  const { api } = useAuth();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [items, setItems] = useState<any[]>([]);
+  const { toast } = useAlert();
+  const [products, setProducts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState<any>({ name: '', brand: '', category: 'Mobiles', price: '', description: '', image: '', stock: '' });
-  const [emi, setEmi] = useState<EmiOverrides>(emptyOverrides);
-  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    name: '', brand: '', category_id: '', subcategory: '', short_description: '', full_description: '',
+    price: '', original_price: '', stock: '', is_emi_enabled: true, down_payment: '', interest_rate: '14',
+    processing_fee: '499', available_tenures: '3,6,9,12,18,24', is_flash_deal: false, is_best_seller: false, is_featured: false,
+    images: '', highlights: '', specifications: '', box_contents: '', warranty_period: '1 Year',
+  });
 
   const load = useCallback(async () => {
-    try { setItems(await api('/products')); } catch {} finally { setLoading(false); }
-  }, [api]);
+    try {
+      const [prods, cats] = await Promise.all([productService.getProducts(), productService.getCategories()]);
+      setProducts(prods);
+      setCategories(cats);
+    } catch (e) {} finally { setLoading(false); }
+  }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: '', brand: '', category: 'Mobiles', price: '', description: '', image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=940', stock: '10' });
-    setEmi(emptyOverrides);
-    setModalOpen(true);
+    setForm({ name: '', brand: '', category_id: categories[0]?.id || '', subcategory: '', short_description: '', full_description: '', price: '', original_price: '', stock: '', is_emi_enabled: true, down_payment: '', interest_rate: '14', processing_fee: '499', available_tenures: '3,6,9,12,18,24', is_flash_deal: false, is_best_seller: false, is_featured: false, images: '', highlights: '', specifications: '', box_contents: '', warranty_period: '1 Year' });
+    setShowForm(true);
   };
+
   const openEdit = (p: any) => {
     setEditing(p);
-    setForm({ ...p, price: String(p.price), stock: String(p.stock) });
-    const ov = p.emi_overrides;
-    if (ov) {
-      setEmi({
-        enabled: true,
-        interest_rate: ov.interest_rate != null ? String(ov.interest_rate) : '',
-        down_payment_percent: ov.down_payment_percent != null ? String(ov.down_payment_percent) : '',
-        processing_fee: ov.processing_fee != null ? String(ov.processing_fee) : '',
-        tenures: ov.tenures ? ov.tenures.join(',') : '',
-        custom_charges: (ov.custom_charges || []).map((c: any) => ({ label: c.label, amount: String(c.amount), type: c.type || 'fixed' })),
-      });
-    } else setEmi(emptyOverrides);
-    setModalOpen(true);
+    setForm({
+      name: p.name || '', brand: p.brand || '', category_id: p.category_id || '', subcategory: p.subcategory || '',
+      short_description: p.short_description || '', full_description: p.full_description || '',
+      price: String(p.price || ''), original_price: String(p.original_price || ''), stock: String(p.stock || ''),
+      is_emi_enabled: p.is_emi_enabled, down_payment: String(p.down_payment || ''), interest_rate: String(p.interest_rate || '14'),
+      processing_fee: String(p.processing_fee || '499'), available_tenures: (p.available_tenures || []).join(','),
+      is_flash_deal: p.is_flash_deal, is_best_seller: p.is_best_seller, is_featured: p.is_featured,
+      images: (p.images || []).join('\n'), highlights: (p.highlights || []).join('\n'),
+      specifications: JSON.stringify(p.specifications || {}), box_contents: (p.box_contents || []).join('\n'),
+      warranty_period: p.warranty_period || '1 Year',
+    });
+    setShowForm(true);
   };
 
-  const save = async () => {
-    setBusy(true);
+  const handleSave = async () => {
+    if (!form.name || !form.price) { toast('Name and price are required', 'error'); return; }
     try {
-      const body: any = { ...form, price: parseFloat(form.price), stock: parseInt(form.stock), emi_eligible: true };
-      if (emi.enabled) {
-        const ov: any = {};
-        if (emi.interest_rate) ov.interest_rate = parseFloat(emi.interest_rate);
-        if (emi.down_payment_percent) ov.down_payment_percent = parseFloat(emi.down_payment_percent);
-        if (emi.processing_fee) ov.processing_fee = parseFloat(emi.processing_fee);
-        if (emi.tenures) ov.tenures = emi.tenures.split(',').map((s) => parseInt(s.trim())).filter((n) => !isNaN(n));
-        if (emi.custom_charges.length) ov.custom_charges = emi.custom_charges.map((c) => ({ label: c.label, amount: parseFloat(c.amount) || 0, type: c.type }));
-        body.emi_overrides = ov;
-      } else {
-        body.emi_overrides = null;
-      }
-      if (editing) await api(`/products/${editing.id}`, { method: 'PUT', body: JSON.stringify(body) });
-      else await api('/products', { method: 'POST', body: JSON.stringify(body) });
-      setModalOpen(false); load();
-    } catch (e) {} finally { setBusy(false); }
+      const data = {
+        name: form.name, brand: form.brand, category_id: form.category_id || null, subcategory: form.subcategory,
+        short_description: form.short_description, full_description: form.full_description,
+        price: Number(form.price), original_price: Number(form.original_price) || Number(form.price),
+        stock: Number(form.stock) || 0, is_emi_enabled: form.is_emi_enabled,
+        down_payment: Number(form.down_payment) || 0, interest_rate: Number(form.interest_rate) || 14,
+        processing_fee: Number(form.processing_fee) || 499,
+        available_tenures: form.available_tenures.split(',').map((t) => Number(t.trim())).filter(Boolean),
+        is_flash_deal: form.is_flash_deal, is_best_seller: form.is_best_seller, is_featured: form.is_featured,
+        images: form.images.split('\n').map((s) => s.trim()).filter(Boolean),
+        highlights: form.highlights.split('\n').map((s) => s.trim()).filter(Boolean),
+        specifications: form.specifications ? JSON.parse(form.specifications) : {},
+        box_contents: form.box_contents.split('\n').map((s) => s.trim()).filter(Boolean),
+        warranty_period: form.warranty_period,
+      };
+      if (editing) { await productService.updateProduct(editing.id, data); toast('Product updated', 'success'); }
+      else { await productService.createProduct(data); toast('Product created', 'success'); }
+      setShowForm(false);
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
   };
 
-  const del = async (id: string) => {
-    await api(`/products/${id}`, { method: 'DELETE' });
-    load();
+  const handleDelete = (p: any) => {
+    Alert.alert('Delete Product', `Delete "${p.name}"?`, [
+      { text: 'Cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => { try { await productService.deleteProduct(p.id); toast('Product deleted', 'info'); load(); } catch (e: any) { toast(e.message, 'error'); } } },
+    ]);
   };
-
-  const addCharge = () => setEmi({ ...emi, custom_charges: [...emi.custom_charges, { label: '', amount: '', type: 'fixed' }] });
-  const updCharge = (i: number, key: string, val: any) => {
-    const next = [...emi.custom_charges]; (next[i] as any)[key] = val; setEmi({ ...emi, custom_charges: next });
-  };
-  const delCharge = (i: number) => setEmi({ ...emi, custom_charges: emi.custom_charges.filter((_, idx) => idx !== i) });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       <View style={styles.header}>
         <Text style={styles.title}>Products</Text>
-        <Pressable testID="add-product-btn" style={styles.addBtn} onPress={openAdd}>
-          <Ionicons name="add" size={20} color={colors.black} />
-          <Text style={styles.addBtnText}>Add</Text>
+        <Pressable style={styles.addBtn} onPress={openAdd}>
+          <Ionicons name="add" size={20} color={colors.white} />
+          <Text style={styles.addBtnText}>Add Product</Text>
         </Pressable>
       </View>
-      {loading ? <ActivityIndicator style={{ marginTop: 40 }} color={colors.white} /> : (
-        <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 100 }}>
-          {items.map((p) => (
-            <View testID={`admin-prod-${p.id}`} key={p.id} style={styles.row}>
-              <Image source={{ uri: p.image }} style={styles.img} contentFit="cover" />
+
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center' }}><ActivityIndicator color={colors.white} size="large" /></View>
+      ) : products.length === 0 ? (
+        <View style={styles.empty}>
+          <Ionicons name="cube-outline" size={72} color={colors.textMuted} />
+          <Text style={styles.emptyText}>No products in catalog</Text>
+          <Pressable style={styles.emptyBtn} onPress={openAdd}><Text style={styles.emptyBtnText}>Add Product</Text></Pressable>
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
+          {products.map((p) => (
+            <View key={p.id} style={styles.card}>
+              <Image source={{ uri: p.images?.[0] }} style={styles.thumb} contentFit="cover" />
               <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{p.name}</Text>
-                <Text style={styles.brand}>{p.brand} • {p.category}</Text>
-                <Text style={styles.price}>{formatINR(p.price)} • Stock: {p.stock}</Text>
-                {p.emi_overrides && <View style={styles.customEmiTag}><Text style={styles.customEmiText}>CUSTOM EMI</Text></View>}
+                <Text style={styles.prodName} numberOfLines={1}>{p.name}</Text>
+                <Text style={styles.prodCat}>{p.brand}</Text>
+                <View style={styles.priceRow}>
+                  <Text style={styles.price}>{formatINR(p.price)}</Text>
+                  {p.original_price > p.price && <Text style={styles.mrp}>{formatINR(p.original_price)}</Text>}
+                </View>
+                <View style={styles.badgeRow}>
+                  <View style={[styles.stockBadge, { backgroundColor: p.stock > 0 ? colors.success + '20' : colors.error + '20' }]}>
+                    <Text style={[styles.stockText, { color: p.stock > 0 ? colors.success : colors.error }]}>{p.stock > 0 ? `In Stock (${p.stock})` : 'Out of Stock'}</Text>
+                  </View>
+                  {p.is_emi_enabled && <View style={styles.emiBadge}><Text style={styles.emiText}>EMI</Text></View>}
+                  {p.is_featured && <View style={styles.featBadge}><Text style={styles.featText}>Featured</Text></View>}
+                </View>
               </View>
-              <Pressable style={styles.actionBtn} onPress={() => openEdit(p)}><Ionicons name="pencil" size={16} color={colors.text} /></Pressable>
-              <Pressable style={[styles.actionBtn, { backgroundColor: 'rgba(239,68,68,0.15)' }]} onPress={() => del(p.id)}><Ionicons name="trash" size={16} color={colors.error} /></Pressable>
+              <View style={styles.actionCol}>
+                <Pressable style={styles.editBtn} onPress={() => openEdit(p)}><Ionicons name="create-outline" size={18} color={colors.primaryLight} /></Pressable>
+                <Pressable style={styles.delBtn} onPress={() => handleDelete(p)}><Ionicons name="trash-outline" size={18} color={colors.error} /></Pressable>
+              </View>
             </View>
           ))}
         </ScrollView>
       )}
 
-      <Modal visible={modalOpen} animationType="slide" transparent onRequestClose={() => setModalOpen(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
-          <View style={[styles.modal, { paddingBottom: insets.bottom + spacing.lg }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{editing ? 'Edit product' : 'Add product'}</Text>
-              <Pressable onPress={() => setModalOpen(false)}><Ionicons name="close" size={24} color={colors.text} /></Pressable>
-            </View>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Field label="Name" value={form.name} onChange={(v: string) => setForm({ ...form, name: v })} tid="pf-name" />
-              <Field label="Brand" value={form.brand} onChange={(v: string) => setForm({ ...form, brand: v })} tid="pf-brand" />
-              <Text style={styles.fieldLabel}>Category</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 4 }}>
-                {CATS.map((c) => (
-                  <Pressable key={c} style={[styles.catChip, form.category === c && styles.catChipActive]} onPress={() => setForm({ ...form, category: c })}>
-                    <Text style={[styles.catChipText, form.category === c && { color: colors.black }]}>{c}</Text>
+      {/* Product Form Modal */}
+      <Modal visible={showForm} transparent animationType="slide">
+        <Pressable style={styles.modalOverlay} onPress={() => setShowForm(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>{editing ? 'Edit Product' : 'Add Product'}</Text>
+              <Text style={styles.modalLabel}>Product Name</Text>
+              <TextInput style={styles.modalInput} value={form.name} onChangeText={(t) => setForm({ ...form, name: t })} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Brand</Text>
+              <TextInput style={styles.modalInput} value={form.brand} onChangeText={(t) => setForm({ ...form, brand: t })} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Category</Text>
+              <View style={styles.catRow}>
+                {categories.map((c) => (
+                  <Pressable key={c.id} style={[styles.catChip, form.category_id === c.id && styles.catChipActive]} onPress={() => setForm({ ...form, category_id: c.id })}>
+                    <Text style={[styles.catChipText, form.category_id === c.id && styles.catChipTextActive]}>{c.name}</Text>
                   </Pressable>
                 ))}
-              </ScrollView>
-              <Field label="Price (₹)" value={form.price} onChange={(v: string) => setForm({ ...form, price: v })} kb="decimal-pad" tid="pf-price" />
-              <Field label="Stock" value={form.stock} onChange={(v: string) => setForm({ ...form, stock: v })} kb="number-pad" tid="pf-stock" />
-              <Field label="Image URL" value={form.image} onChange={(v: string) => setForm({ ...form, image: v })} tid="pf-image" />
-              <Field label="Description" value={form.description} onChange={(v: string) => setForm({ ...form, description: v })} multi tid="pf-desc" />
-
-              {/* Custom EMI schema section */}
-              <Pressable testID="toggle-emi-ovr" style={styles.emiToggle} onPress={() => setEmi({ ...emi, enabled: !emi.enabled })}>
-                <View style={styles.emiToggleLeft}>
-                  <Ionicons name="calendar" size={18} color={colors.gold} />
-                  <View style={{ marginLeft: spacing.sm }}>
-                    <Text style={styles.emiToggleTitle}>Custom EMI Schema</Text>
-                    <Text style={styles.emiToggleSub}>{emi.enabled ? 'Overrides global config' : 'Uses global config'}</Text>
-                  </View>
-                </View>
-                <View style={[styles.switch, emi.enabled && styles.switchOn]}>
-                  <View style={[styles.switchDot, emi.enabled && styles.switchDotOn]} />
-                </View>
-              </Pressable>
-
-              {emi.enabled && (
-                <View style={styles.emiBox}>
-                  <Text style={styles.emiHint}>Leave blank to use global default</Text>
-                  <Field label="Interest Rate (% APR)" value={emi.interest_rate} onChange={(v: string) => setEmi({ ...emi, interest_rate: v })} kb="decimal-pad" tid="ovr-rate" />
-                  <Field label="Down Payment (%)" value={emi.down_payment_percent} onChange={(v: string) => setEmi({ ...emi, down_payment_percent: v })} kb="decimal-pad" tid="ovr-dp" />
-                  <Field label="Processing Fee (₹)" value={emi.processing_fee} onChange={(v: string) => setEmi({ ...emi, processing_fee: v })} kb="decimal-pad" tid="ovr-fee" />
-                  <Field label="Tenures (months, comma-separated)" value={emi.tenures} onChange={(v: string) => setEmi({ ...emi, tenures: v })} tid="ovr-tenures" />
-
-                  <View style={styles.chargesHeader}>
-                    <Text style={styles.fieldLabel}>Custom Charges</Text>
-                    <Pressable testID="ovr-add-charge" onPress={addCharge} style={styles.addChargeBtn}>
-                      <Ionicons name="add" size={14} color={colors.black} />
-                      <Text style={styles.addChargeText}>Add</Text>
-                    </Pressable>
-                  </View>
-                  {emi.custom_charges.length === 0 ? (
-                    <Text style={styles.noCharges}>No custom charges added</Text>
-                  ) : emi.custom_charges.map((c, i) => (
-                    <View testID={`ovr-charge-${i}`} key={i} style={styles.chargeRow}>
-                      <TextInput
-                        testID={`ovr-charge-label-${i}`}
-                        placeholder="Label (e.g., Insurance)"
-                        placeholderTextColor={colors.textMuted}
-                        value={c.label}
-                        onChangeText={(v) => updCharge(i, 'label', v)}
-                        style={[styles.chargeInput, { flex: 2 }]}
-                      />
-                      <TextInput
-                        testID={`ovr-charge-amt-${i}`}
-                        placeholder="Amount"
-                        placeholderTextColor={colors.textMuted}
-                        value={c.amount}
-                        onChangeText={(v) => updCharge(i, 'amount', v)}
-                        keyboardType="decimal-pad"
-                        style={[styles.chargeInput, { flex: 1 }]}
-                      />
-                      <Pressable testID={`ovr-charge-type-${i}`} onPress={() => updCharge(i, 'type', c.type === 'fixed' ? 'percent' : 'fixed')} style={styles.typeToggle}>
-                        <Text style={styles.typeText}>{c.type === 'percent' ? '%' : '₹'}</Text>
-                      </Pressable>
-                      <Pressable testID={`ovr-charge-del-${i}`} onPress={() => delCharge(i)} style={styles.delChargeBtn}>
-                        <Ionicons name="trash" size={14} color={colors.error} />
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              <Pressable testID="pf-save" style={styles.saveBtn} onPress={save} disabled={busy}>
-                {busy ? <ActivityIndicator color={colors.black} /> : <Text style={styles.saveBtnText}>{editing ? 'Update' : 'Create'}</Text>}
-              </Pressable>
+              </View>
+              <Text style={styles.modalLabel}>Short Description</Text>
+              <TextInput style={styles.modalInput} value={form.short_description} onChangeText={(t) => setForm({ ...form, short_description: t })} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Full Description</Text>
+              <TextInput style={styles.modalInput} value={form.full_description} onChangeText={(t) => setForm({ ...form, full_description: t })} multiline numberOfLines={3} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Discounted Price</Text>
+              <TextInput style={styles.modalInput} value={form.price} onChangeText={(t) => setForm({ ...form, price: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Original Price (MRP)</Text>
+              <TextInput style={styles.modalInput} value={form.original_price} onChangeText={(t) => setForm({ ...form, original_price: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Stock Quantity</Text>
+              <TextInput style={styles.modalInput} value={form.stock} onChangeText={(t) => setForm({ ...form, stock: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Image URLs (one per line)</Text>
+              <TextInput style={styles.modalInput} value={form.images} onChangeText={(t) => setForm({ ...form, images: t })} multiline numberOfLines={3} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Highlights (one per line)</Text>
+              <TextInput style={styles.modalInput} value={form.highlights} onChangeText={(t) => setForm({ ...form, highlights: t })} multiline numberOfLines={3} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Specifications (JSON)</Text>
+              <TextInput style={styles.modalInput} value={form.specifications} onChangeText={(t) => setForm({ ...form, specifications: t })} multiline numberOfLines={3} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Box Contents (one per line)</Text>
+              <TextInput style={styles.modalInput} value={form.box_contents} onChangeText={(t) => setForm({ ...form, box_contents: t })} multiline numberOfLines={3} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Warranty Period</Text>
+              <TextInput style={styles.modalInput} value={form.warranty_period} onChangeText={(t) => setForm({ ...form, warranty_period: t })} placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Down Payment</Text>
+              <TextInput style={styles.modalInput} value={form.down_payment} onChangeText={(t) => setForm({ ...form, down_payment: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Interest Rate (% p.a.)</Text>
+              <TextInput style={styles.modalInput} value={form.interest_rate} onChangeText={(t) => setForm({ ...form, interest_rate: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Processing Fee</Text>
+              <TextInput style={styles.modalInput} value={form.processing_fee} onChangeText={(t) => setForm({ ...form, processing_fee: t })} keyboardType="numeric" placeholderTextColor={colors.textMuted} />
+              <Text style={styles.modalLabel}>Available Tenures (comma-separated)</Text>
+              <TextInput style={styles.modalInput} value={form.available_tenures} onChangeText={(t) => setForm({ ...form, available_tenures: t })} placeholderTextColor={colors.textMuted} />
+              <View style={styles.toggleRow}>
+                {[
+                  { key: 'is_emi_enabled', label: 'EMI Enabled' },
+                  { key: 'is_flash_deal', label: 'Flash Deal' },
+                  { key: 'is_best_seller', label: 'Best Seller' },
+                  { key: 'is_featured', label: 'Featured' },
+                ].map((t) => (
+                  <Pressable key={t.key} style={[styles.toggleChip, (form as any)[t.key] && styles.toggleChipActive]} onPress={() => setForm({ ...form, [t.key]: !(form as any)[t.key] })}>
+                    <Text style={[styles.toggleChipText, (form as any)[t.key] && styles.toggleChipTextActive]}>{t.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.modalActions}>
+                <Pressable style={styles.cancelBtn} onPress={() => setShowForm(false)}><Text style={styles.cancelText}>Cancel</Text></Pressable>
+                <Pressable style={styles.saveBtn} onPress={handleSave}><Text style={styles.saveText}>{editing ? 'Update' : 'Create'}</Text></Pressable>
+              </View>
             </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );
 }
 
-function Field({ label, value, onChange, kb, multi, tid }: any) {
-  return (
-    <>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput testID={tid} value={value} onChangeText={onChange} keyboardType={kb || 'default'} multiline={multi} style={[styles.field, multi && { minHeight: 60 }]} placeholderTextColor={colors.textMuted} />
-    </>
-  );
-}
-
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: spacing.xl },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.xl, paddingVertical: spacing.lg },
   title: { color: colors.text, fontSize: fs.xxl, fontWeight: '700' },
-  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.white, paddingHorizontal: spacing.md, height: 36, borderRadius: radius.pill },
-  addBtnText: { color: colors.black, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.bg2, padding: spacing.md, borderRadius: radius.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
-  img: { width: 60, height: 60, borderRadius: radius.sm, backgroundColor: colors.bg3 },
-  name: { color: colors.text, fontWeight: '600' },
-  brand: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  price: { color: colors.gold, fontSize: fs.sm, fontWeight: '700', marginTop: 2 },
-  customEmiTag: { alignSelf: 'flex-start', backgroundColor: 'rgba(212,175,55,0.15)', borderColor: colors.gold, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm, marginTop: 4 },
-  customEmiText: { color: colors.gold, fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-  actionBtn: { width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.bg3, alignItems: 'center', justifyContent: 'center' },
-  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: colors.bg2, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: spacing.xl, maxHeight: '92%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
-  modalTitle: { color: colors.text, fontSize: fs.xl, fontWeight: '700' },
-  fieldLabel: { color: colors.textDim, fontSize: fs.sm, marginTop: spacing.md, marginBottom: 6 },
-  field: { backgroundColor: colors.bg3, borderRadius: radius.md, padding: spacing.md, color: colors.text, borderWidth: 1, borderColor: colors.border },
-  catChip: { paddingHorizontal: 12, height: 32, borderRadius: radius.pill, backgroundColor: colors.bg3, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  catChipActive: { backgroundColor: colors.white, borderColor: colors.white },
-  catChipText: { color: colors.textDim, fontWeight: '600', fontSize: fs.sm },
-  emiToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.lg, padding: spacing.md, backgroundColor: colors.bg3, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  emiToggleLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  emiToggleTitle: { color: colors.text, fontWeight: '700' },
-  emiToggleSub: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  switch: { width: 44, height: 24, borderRadius: 12, backgroundColor: colors.bg, padding: 2, justifyContent: 'center' },
-  switchOn: { backgroundColor: colors.gold },
-  switchDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: colors.textMuted },
-  switchDotOn: { backgroundColor: colors.black, alignSelf: 'flex-end' },
-  emiBox: { marginTop: spacing.sm, padding: spacing.md, backgroundColor: colors.bg3, borderRadius: radius.md, borderWidth: 1, borderColor: colors.gold },
-  emiHint: { color: colors.textDim, fontSize: fs.sm, fontStyle: 'italic' },
-  chargesHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  addChargeBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: colors.gold, paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill, marginTop: spacing.md },
-  addChargeText: { color: colors.black, fontWeight: '700', fontSize: fs.sm },
-  noCharges: { color: colors.textMuted, fontSize: fs.sm, fontStyle: 'italic', marginTop: spacing.sm },
-  chargeRow: { flexDirection: 'row', gap: 6, alignItems: 'center', marginTop: spacing.sm },
-  chargeInput: { backgroundColor: colors.bg2, borderRadius: radius.sm, padding: 8, color: colors.text, borderWidth: 1, borderColor: colors.border, fontSize: fs.sm },
-  typeToggle: { width: 36, height: 36, backgroundColor: colors.bg2, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
-  typeText: { color: colors.text, fontWeight: '700' },
-  delChargeBtn: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: 'rgba(239,68,68,0.15)', alignItems: 'center', justifyContent: 'center' },
-  saveBtn: { marginTop: spacing.xl, height: 50, borderRadius: radius.md, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center' },
-  saveBtnText: { color: colors.black, fontWeight: '700', fontSize: fs.lg },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.primary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md },
+  addBtnText: { color: colors.white, fontWeight: '700', fontSize: fs.sm },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+  emptyText: { color: colors.textDim, fontSize: fs.lg },
+  emptyBtn: { backgroundColor: colors.primary, paddingHorizontal: spacing.xl, paddingVertical: spacing.md, borderRadius: radius.md },
+  emptyBtnText: { color: colors.white, fontWeight: '700' },
+  card: { flexDirection: 'row', gap: spacing.md, backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  thumb: { width: 70, height: 70, borderRadius: radius.sm, backgroundColor: colors.surface },
+  prodName: { color: colors.text, fontSize: fs.base, fontWeight: '600', flex: 1 },
+  prodCat: { color: colors.textDim, fontSize: fs.xs, marginTop: 2 },
+  priceRow: { flexDirection: 'row', gap: spacing.sm, marginTop: 4 },
+  price: { color: colors.text, fontWeight: '700' },
+  mrp: { color: colors.textMuted, fontSize: fs.xs, textDecorationLine: 'line-through' },
+  badgeRow: { flexDirection: 'row', gap: 4, marginTop: 4, flexWrap: 'wrap' },
+  stockBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm },
+  stockText: { fontSize: 10, fontWeight: '700' },
+  emiBadge: { backgroundColor: colors.cyan + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm },
+  emiText: { color: colors.cyan, fontSize: 10, fontWeight: '700' },
+  featBadge: { backgroundColor: colors.warning + '20', paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm },
+  featText: { color: colors.warning, fontSize: 10, fontWeight: '700' },
+  actionCol: { justifyContent: 'center', gap: spacing.sm },
+  editBtn: { padding: 8, backgroundColor: colors.surface, borderRadius: radius.sm },
+  delBtn: { padding: 8, backgroundColor: colors.error + '15', borderRadius: radius.sm },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: spacing.xl },
+  modalSheet: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl, maxHeight: '90%' },
+  modalTitle: { color: colors.text, fontSize: fs.xl, fontWeight: '700', marginBottom: spacing.lg },
+  modalLabel: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600', marginBottom: 4, marginTop: spacing.sm },
+  modalInput: { backgroundColor: colors.card, borderRadius: radius.md, paddingHorizontal: spacing.lg, minHeight: 46, color: colors.text, borderWidth: 1, borderColor: colors.border },
+  catRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  catChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  catChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  catChipText: { color: colors.textDim, fontSize: fs.sm },
+  catChipTextActive: { color: colors.white },
+  toggleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
+  toggleChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+  toggleChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  toggleChipText: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600' },
+  toggleChipTextActive: { color: colors.white },
+  modalActions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg, paddingBottom: spacing.lg },
+  cancelBtn: { flex: 1, height: 48, borderRadius: radius.md, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  cancelText: { color: colors.textDim, fontWeight: '700' },
+  saveBtn: { flex: 2, height: 48, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  saveText: { color: colors.white, fontWeight: '700' },
 });

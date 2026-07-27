@@ -7,6 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/AuthContext";
+import { CartProvider } from "@/src/context/CartContext";
+import { AlertProvider } from "@/src/context/AlertContext";
 
 LogBox.ignoreAllLogs(true)
 
@@ -24,11 +26,15 @@ export default function RootLayout() {
   if (!loaded && !error) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0a0a0a' }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0A0A1A' }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0a0a0a' } }} />
+          <CartProvider>
+            <AlertProvider>
+              <StatusBar barStyle="light-content" backgroundColor="#0A0A1A" />
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A1A' } }} />
+            </AlertProvider>
+          </CartProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

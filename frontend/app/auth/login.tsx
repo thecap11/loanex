@@ -1,98 +1,145 @@
 import { useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
-import { useRouter, Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
 
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { sendOtp, verifyOtp } = useAuth();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [mobile, setMobile] = useState('');
+  const [otp, setOtp] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const handle = async () => {
-    setErr(null); setBusy(true);
+  const handleSendOtp = async () => {
+    setErr(null);
+    if (mobile.length !== 10) {
+      setErr('Enter a valid 10-digit mobile number');
+      return;
+    }
     try {
-      const u = await login(email.trim(), password);
-      if (u.role === 'admin') router.replace('/(admin)/dashboard');
-      else if (u.role === 'inventory_manager') router.replace('/(inventory)/stock');
-      else router.replace('/(customer)/home');
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+      setBusy(true);
+      await sendOtp(mobile);
+      setStep(2);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const quickFill = (e: string, p: string) => { setEmail(e); setPassword(p); };
+  const handleVerify = async () => {
+    setErr(null);
+    if (otp.length !== 4) {
+      setErr('Invalid OTP. Use 1234 for demo.');
+      return;
+    }
+    try {
+      setBusy(true);
+      const u = await verifyOtp(mobile, otp);
+      if (u.role === 'admin') router.replace('/(admin)/dashboard');
+      else router.replace('/(customer)/home');
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.bg }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.brandRow}>
-          <View style={styles.logoDot} />
-          <Text style={styles.brand}>LOANEX</Text>
+        <View style={styles.logoWrap}>
+          <View style={styles.logoCircle}>
+            <Ionicons name="shield-checkmark" size={36} color={colors.white} />
+          </View>
         </View>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.sub}>Sign in to your Instant EMI account</Text>
+        <Text style={styles.brand}>LoanEX</Text>
+        <Text style={styles.tagline}>Shop Smart, Pay in Parts</Text>
 
-        <View style={styles.field}>
-          <Ionicons name="mail-outline" size={18} color={colors.textDim} />
-          <TextInput testID="login-email-input" style={styles.input} placeholder="Email" placeholderTextColor={colors.textMuted} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
+        <View style={styles.card}>
+          {step === 1 ? (
+            <>
+              <Text style={styles.stepTitle}>Enter Mobile Number</Text>
+              <View style={styles.field}>
+                <Ionicons name="call-outline" size={18} color={colors.textDim} />
+                <TextInput
+                  testID="login-mobile-input"
+                  style={styles.input}
+                  placeholder="Mobile Number"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  value={mobile}
+                  onChangeText={(t) => { setMobile(t.replace(/[^0-9]/g, '')); setErr(null); }}
+                />
+              </View>
+              {err && <Text testID="login-error" style={styles.error}>{err}</Text>}
+              <Pressable testID="send-otp-btn" style={({ pressed }) => [styles.btn, pressed && { opacity: 0.85 }]} onPress={handleSendOtp} disabled={busy}>
+                {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.btnText}>Send OTP</Text>}
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.stepTitle}>Enter OTP</Text>
+              <Text style={styles.hint}>Enter the code sent to {mobile}</Text>
+              <View style={styles.field}>
+                <Ionicons name="lock-closed-outline" size={18} color={colors.textDim} />
+                <TextInput
+                  testID="login-otp-input"
+                  style={styles.input}
+                  placeholder="Enter OTP"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  value={otp}
+                  onChangeText={(t) => { setOtp(t.replace(/[^0-9]/g, '')); setErr(null); }}
+                />
+              </View>
+              {err && <Text testID="login-error" style={styles.error}>{err}</Text>}
+              <Pressable testID="verify-otp-btn" style={({ pressed }) => [styles.btn, pressed && { opacity: 0.85 }]} onPress={handleVerify} disabled={busy}>
+                {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.btnText}>Verify & Login</Text>}
+              </Pressable>
+              <Pressable testID="change-mobile-link" style={styles.backLink} onPress={() => { setStep(1); setOtp(''); setErr(null); }}>
+                <Text style={styles.backText}>Change Mobile Number</Text>
+              </Pressable>
+            </>
+          )}
         </View>
-        <View style={styles.field}>
-          <Ionicons name="lock-closed-outline" size={18} color={colors.textDim} />
-          <TextInput testID="login-password-input" style={styles.input} placeholder="Password" placeholderTextColor={colors.textMuted} secureTextEntry value={password} onChangeText={setPassword} />
+
+        <View style={styles.trustRow}>
+          <View style={styles.trustChip}><Ionicons name="bicycle-outline" size={14} color={colors.accent} /><Text style={styles.trustText}>Fast Delivery</Text></View>
+          <View style={styles.trustChip}><Ionicons name="card-outline" size={14} color={colors.primaryLight} /><Text style={styles.trustText}>Easy EMI</Text></View>
+          <View style={styles.trustChip}><Ionicons name="lock-closed-outline" size={14} color={colors.success} /><Text style={styles.trustText}>Secure Payments</Text></View>
         </View>
 
-        {err && <Text testID="login-error" style={styles.error}>{err}</Text>}
-
-        <Pressable testID="login-submit-button" style={({ pressed }) => [styles.btn, pressed && { opacity: 0.85 }]} onPress={handle} disabled={busy}>
-          {busy ? <ActivityIndicator color={colors.black} /> : <Text style={styles.btnText}>Sign In</Text>}
-        </Pressable>
-
-        <View style={styles.registerRow}>
-          <Text style={{ color: colors.textDim }}>New here?</Text>
-          <Link href="/auth/register" asChild>
-            <Pressable testID="go-register-link"><Text style={styles.link}> Create account</Text></Pressable>
-          </Link>
-        </View>
-
-        <View style={styles.demoBox}>
-          <Text style={styles.demoTitle}>Quick Demo Access</Text>
-          <Pressable testID="demo-customer" style={styles.demoRow} onPress={() => quickFill('customer@loanex.com', 'customer123')}>
-            <Ionicons name="person-outline" color={colors.text} size={16} />
-            <Text style={styles.demoText}>Customer: customer@loanex.com / customer123</Text>
-          </Pressable>
-          <Pressable testID="demo-admin" style={styles.demoRow} onPress={() => quickFill('admin@loanex.com', 'admin123')}>
-            <Ionicons name="shield-checkmark-outline" color={colors.gold} size={16} />
-            <Text style={styles.demoText}>Admin: admin@loanex.com / admin123</Text>
-          </Pressable>
-          <Pressable testID="demo-inventory" style={styles.demoRow} onPress={() => quickFill('inventory@loanex.com', 'inventory123')}>
-            <Ionicons name="cube-outline" color={colors.success} size={16} />
-            <Text style={styles.demoText}>Inventory: inventory@loanex.com / inventory123</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.demoHint}>Demo OTP: 1234 | Admin: 0000000000</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: spacing.xl, paddingTop: spacing.xxxl * 1.5 },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xxl },
-  logoDot: { width: 12, height: 12, backgroundColor: colors.gold, borderRadius: radius.pill },
-  brand: { color: colors.text, fontSize: fs.lg, fontWeight: '700', letterSpacing: 4 },
-  title: { color: colors.text, fontSize: fs.xxxl, fontWeight: '700', marginBottom: spacing.xs },
-  sub: { color: colors.textDim, fontSize: fs.base, marginBottom: spacing.xl },
-  field: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, height: 54 },
+  container: { padding: spacing.xl, paddingTop: spacing.xxl * 1.5, alignItems: 'center' },
+  logoWrap: { marginBottom: spacing.lg },
+  logoCircle: { width: 72, height: 72, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', shadowColor: colors.primary, shadowOpacity: 0.4, shadowRadius: 20, shadowOffset: { width: 0, height: 0 } },
+  brand: { color: colors.text, fontSize: fs.huge, fontWeight: '700', letterSpacing: 2 },
+  tagline: { color: colors.textDim, fontSize: fs.base, marginTop: spacing.xs, marginBottom: spacing.xxl },
+  card: { width: '100%', backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  stepTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.md },
+  hint: { color: colors.textDim, fontSize: fs.sm, marginBottom: spacing.md },
+  field: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, height: 54 },
   input: { flex: 1, color: colors.text, fontSize: fs.lg },
-  error: { color: colors.error, marginBottom: spacing.md },
-  btn: { backgroundColor: colors.white, height: 54, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', marginTop: spacing.md },
-  btnText: { color: colors.black, fontSize: fs.lg, fontWeight: '700' },
-  registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.xl },
-  link: { color: colors.gold, fontWeight: '600' },
-  demoBox: { marginTop: spacing.xxl, padding: spacing.lg, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  demoTitle: { color: colors.textDim, fontSize: fs.sm, marginBottom: spacing.md, textTransform: 'uppercase', letterSpacing: 1 },
-  demoRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
-  demoText: { color: colors.text, fontSize: fs.sm },
+  error: { color: colors.error, marginBottom: spacing.md, fontSize: fs.sm },
+  btn: { backgroundColor: colors.primary, height: 54, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
+  btnText: { color: colors.white, fontSize: fs.lg, fontWeight: '700' },
+  backLink: { alignItems: 'center', paddingVertical: spacing.md },
+  backText: { color: colors.primaryLight, fontSize: fs.sm, fontWeight: '600' },
+  trustRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xxl },
+  trustChip: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: colors.card, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
+  trustText: { color: colors.textDim, fontSize: fs.xs, fontWeight: '600' },
+  demoHint: { color: colors.textMuted, fontSize: fs.xs, marginTop: spacing.lg },
 });

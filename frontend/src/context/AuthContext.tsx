@@ -1,19 +1,25 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { supabase, isAdminEmail } from '@/src/lib/supabase';
+import { creditService } from '@/src/services/creditService';
 import { storage } from '@/src/utils/storage';
 
-const BACKEND = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-export type Role = 'customer' | 'admin' | 'inventory_manager';
-export type User = { id: string; email: string; name: string; role: Role };
+export type Role = 'customer' | 'admin';
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  mobile: string;
+};
 
 type AuthCtx = {
   user: User | null;
-  token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<User>;
-  register: (email: string, password: string, name: string, role: Role) => Promise<User>;
+  initialized: boolean;
+  sendOtp: (mobile: string) => Promise<void>;
+  verifyOtp: (mobile: string, otp: string) => Promise<User>;
   logout: () => Promise<void>;
-  api: (path: string, opts?: RequestInit) => Promise<any>;
+  refreshUser: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -24,71 +30,144 @@ export const useAuth = () => {
   return c;
 };
 
+const DEMO_OTP = '1234';
+
+function mobileToEmail(mobile: string): string {
+  return `${mobile}@loanex.app`;
+}
+
+function derivePassword(mobile: string): string {
+  return `LoanEX_${mobile}!`;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const t = await storage.secureGet('token', null);
-      const u = await storage.getItem<any>('user', null);
-      if (t && u) {
-        setToken(t as string);
-        setUser(u as User);
-      }
-      setLoading(false);
-    })();
+  const buildUser = useCallback(async (session: any): Promise<User | null> => {
+    if (!session?.user) return null;
+    const email = session.user.email || '';
+    const mobile = email.replace('@loanex.app', '');
+    const isEmail = isAdminEmail(email);
+    let role: Role = isEmail ? 'admin' : 'customer';
+
+    if (!isEmail) {
+      const { data: adminRole } = await supabase
+        .from('admin_roles')
+        .select('id')
+        .eq('user_id', session.user.id)
+        .maybeSingle();
+      if (adminRole) role = 'admin';
+    }
+
+    let name = '';
+    try {
+      const customer = await creditService.getCreditProfile(session.user.id);
+      name = customer?.full_name || mobile;
+    } catch {
+      name = mobile;
+    }
+
+    return { id: session.user.id, email, name, role, mobile };
   }, []);
 
-  const api = useCallback(async (path: string, opts: RequestInit = {}) => {
-    const headers: any = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${BACKEND}/api${path}`, { ...opts, headers });
-    const text = await res.text();
-    let data: any = null;
-    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-    if (!res.ok) {
-      const msg = (data && data.detail) || `Request failed (${res.status})`;
-      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
-    }
-    return data;
-  }, [token]);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (mounted && session) {
+          const u = await buildUser(session);
+          if (mounted) setUser(u);
+        }
+      } catch (e) {
+        console.warn('[auth] init error', e);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+          setInitialized(true);
+        }
+      }
+    })();
 
-  const login = async (email: string, password: string) => {
-    const res = await fetch(`${BACKEND}/api/auth/login`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      (async () => {
+        if (event === 'SIGNED_OUT') {
+          setUser(null);
+          return;
+        }
+        if (session) {
+          const u = await buildUser(session);
+          setUser(u);
+        }
+      })();
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Login failed');
-    await storage.secureSet('token', data.token);
-    await storage.setItem('user', data.user);
-    setToken(data.token); setUser(data.user);
-    return data.user;
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [buildUser]);
+
+  const sendOtp = async (mobile: string) => {
+    if (mobile.length !== 10) throw new Error('Enter a valid 10-digit mobile number');
   };
 
-  const register = async (email: string, password: string, name: string, role: Role) => {
-    const res = await fetch(`${BACKEND}/api/auth/register`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name, role }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Register failed');
-    await storage.secureSet('token', data.token);
-    await storage.setItem('user', data.user);
-    setToken(data.token); setUser(data.user);
-    return data.user;
+  const verifyOtp = async (mobile: string, otp: string): Promise<User> => {
+    if (otp !== DEMO_OTP) throw new Error('Invalid OTP. Use 1234 for demo.');
+
+    const email = mobileToEmail(mobile);
+    const password = derivePassword(mobile);
+
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+    let session = signInData?.session;
+    if (signInError) {
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+      if (signUpError) throw new Error(signUpError.message);
+
+      if (signUpData.session) {
+        session = signUpData.session;
+      } else {
+        const { data: reSignin, error: reSigninErr } = await supabase.auth.signInWithPassword({ email, password });
+        if (reSigninErr) throw new Error(reSigninErr.message);
+        session = reSignin.session;
+      }
+
+      if (session?.user) {
+        try {
+          await creditService.ensureCustomer(session.user.id, email, mobile);
+        } catch (e) {
+          console.warn('[auth] ensureCustomer failed', e);
+        }
+      }
+    }
+
+    if (!session) throw new Error('Authentication failed. Please try again.');
+
+    const u = await buildUser(session);
+    if (!u) throw new Error('Failed to load user profile.');
+    setUser(u);
+    return u;
+  };
+
+  const refreshUser = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      const u = await buildUser(session);
+      setUser(u);
+    }
   };
 
   const logout = async () => {
-    await storage.secureRemove('token');
+    await supabase.auth.signOut();
     await storage.removeItem('user');
-    setToken(null); setUser(null);
+    setUser(null);
   };
 
   return (
-    <Ctx.Provider value={{ user, token, loading, login, register, logout, api }}>
+    <Ctx.Provider value={{ user, loading, initialized, sendOtp, verifyOtp, logout, refreshUser }}>
       {children}
     </Ctx.Provider>
   );

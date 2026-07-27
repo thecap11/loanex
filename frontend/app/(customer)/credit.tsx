@@ -1,159 +1,176 @@
-import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, TextInput, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
+import { useAlert } from '@/src/context/AlertContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
-import { formatINR, formatINRShort } from '@/src/utils/currency';
+import { formatINR } from '@/src/utils/currency';
+import { getCreditRating } from '@/src/lib/emi';
+import { creditService } from '@/src/services/creditService';
 
-export default function Credit() {
-  const { api, user } = useAuth();
+export default function CreditProfile() {
+  const { user } = useAuth();
+  const { toast } = useAlert();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const [profile, setProfile] = useState<any>(null);
+  const [credit, setCredit] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showRequest, setShowRequest] = useState(false);
+  const [income, setIncome] = useState('');
+  const [requestedLimit, setRequestedLimit] = useState('');
 
   const load = useCallback(async () => {
-    try { setProfile(await api('/credit/profile')); } catch {} finally { setLoading(false); }
-  }, [api]);
+    if (!user) return;
+    try { setCredit(await creditService.getCreditProfile(user.id)); } catch (e) {} finally { setLoading(false); }
+  }, [user]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useCallback(() => { load(); }, [load]);
 
-  if (loading || !profile) return <View style={styles.center}><ActivityIndicator color={colors.white} /></View>;
+  const rating = credit ? getCreditRating(credit.cibil_score) : { label: 'Good', color: colors.success };
+  const utilPct = credit && credit.approved_limit > 0 ? ((credit.approved_limit - credit.available_limit) / credit.approved_limit) * 100 : 0;
 
-  const tierColor = profile.tier === 'excellent' ? colors.info : profile.tier === 'good' ? colors.success : profile.tier === 'fair' ? colors.warning : colors.error;
-  const pct = Math.max(0, Math.min(1, (profile.credit_score - 300) / 600));
-  const utilizationPct = profile.utilization / 100;
+  const handleRequest = async () => {
+    const req = Number(requestedLimit);
+    if (!req || req <= (credit?.approved_limit || 0)) { toast('Requested limit must be higher than current approved limit.', 'error'); return; }
+    if (req > 200000) { toast('Maximum limit is ₹2,00,000', 'error'); return; }
+    try {
+      await creditService.updateCreditLimit(user!.id, req, req - (credit?.approved_limit || 0) + (credit?.available_limit || 0));
+      toast('Credit limit updated!', 'success');
+      setShowRequest(false);
+      setIncome(''); setRequestedLimit('');
+      load();
+    } catch (e: any) { toast(e.message, 'error'); }
+  };
+
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center' }}><ActivityIndicator color={colors.white} size="large" /></View>;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingTop: insets.top + spacing.md, paddingBottom: 100 }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
       <View style={styles.header}>
+        <Pressable onPress={() => {}}><Ionicons name="arrow-back" size={22} color={colors.text} /></Pressable>
         <Text style={styles.title}>Credit Profile</Text>
-        <Text style={styles.sub}>Your creditworthiness at a glance</Text>
+        <View style={{ width: 22 }} />
       </View>
 
-      {/* Score gauge */}
-      <View style={styles.gaugeCard}>
-        <LinearGradient colors={[colors.bg2, colors.bg3]} style={StyleSheet.absoluteFill} />
-        <View style={styles.gauge}>
-          <View style={styles.gaugeBg} />
-          <View style={[styles.gaugeFill, { width: `${pct * 100}%`, backgroundColor: tierColor }]} />
-        </View>
-        <View style={styles.gaugeLabels}>
-          <Text style={styles.gaugeMin}>300</Text>
-          <Text style={styles.gaugeMax}>900</Text>
-        </View>
-        <View style={styles.scoreBlock}>
-          <Text style={[styles.scoreNum, { color: tierColor }]}>{profile.credit_score}</Text>
-          <View style={[styles.tierBadge, { borderColor: tierColor, backgroundColor: tierColor + '22' }]}>
-            <Text style={[styles.tierText, { color: tierColor }]}>{profile.tier.toUpperCase()}</Text>
+      <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
+        {/* Score Gauge */}
+        <View style={styles.gaugeCard}>
+          <LinearGradient colors={[colors.card, colors.cardHover]} style={StyleSheet.absoluteFill} />
+          <Text style={styles.scoreNum}>{credit?.cibil_score || 750}</Text>
+          <Text style={styles.scoreDenom}>/ 900</Text>
+          <View style={[styles.ratingBadge, { backgroundColor: rating.color + '20' }]}>
+            <Text style={[styles.ratingText, { color: rating.color }]}>{rating.label}</Text>
           </View>
         </View>
-      </View>
 
-      {/* Limits */}
-      <View style={styles.limitsCard}>
-        <Text style={styles.sectionLabel}>CREDIT LIMIT</Text>
-        <Text style={styles.limitTotal}>{formatINR(profile.approved_limit)}</Text>
-        <View style={styles.utilBar}>
-          <View style={[styles.utilFill, { width: `${utilizationPct * 100}%` }]} />
-        </View>
-        <View style={styles.limitRow}>
-          <View>
-            <Text style={styles.dim}>Available</Text>
-            <Text style={[styles.limitVal, { color: colors.success }]}>{formatINR(profile.available_limit)}</Text>
+        {/* Credit Limit Bar */}
+        <View style={styles.limitCard}>
+          <Text style={styles.limitLabel}>Available Limit</Text>
+          <View style={styles.limitTrack}><View style={[styles.limitFill, { width: `${100 - utilPct}%` }]} /></View>
+          <View style={styles.limitRow}>
+            <View><Text style={styles.limitVal}>{formatINR(credit?.available_limit || 50000)}</Text><Text style={styles.limitSub}>Available</Text></View>
+            <View><Text style={styles.limitVal}>{formatINR(credit?.approved_limit || 50000)}</Text><Text style={styles.limitSub}>Approved</Text></View>
           </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.dim}>Used</Text>
-            <Text style={[styles.limitVal, { color: colors.warning }]}>{formatINR(profile.used_limit)}</Text>
-          </View>
+          <Pressable style={styles.reqBtn} onPress={() => setShowRequest(true)}>
+            <Ionicons name="trending-up" size={18} color={colors.white} />
+            <Text style={styles.reqBtnText}>Request Credit Limit Increase</Text>
+          </Pressable>
         </View>
-        <Text style={styles.utilLabel}>Utilization: {profile.utilization}%</Text>
-      </View>
 
-      {/* KYC prompt */}
-      {user?.kyc_status !== 'verified' && (
-        <Pressable testID="kyc-cta" style={styles.kycCard} onPress={() => router.push('/kyc')}>
-          <Ionicons name="shield-outline" size={24} color={colors.gold} />
-          <View style={{ flex: 1, marginLeft: spacing.md }}>
-            <Text style={styles.kycTitle}>Complete KYC to boost your limit</Text>
-            <Text style={styles.kycSub}>Verified users get higher credit limits and lower interest rates.</Text>
+        {/* Score Factors */}
+        <Text style={styles.sectionTitle}>Score Factors</Text>
+        <View style={styles.factorsCard}>
+          {[
+            { label: 'Payment History', impact: 'Positive', color: colors.success },
+            { label: 'Credit Utilization', impact: 'Positive', color: colors.success },
+            { label: 'Account Age', impact: 'Neutral', color: colors.textDim },
+            { label: 'Credit Mix', impact: 'Positive', color: colors.success },
+          ].map((f) => (
+            <View key={f.label} style={styles.factorRow}>
+              <Text style={styles.factorLabel}>{f.label}</Text>
+              <View style={[styles.factorBadge, { backgroundColor: f.color + '20' }]}>
+                <Text style={[styles.factorText, { color: f.color }]}>{f.impact}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* Score History */}
+        <Text style={styles.sectionTitle}>Score History</Text>
+        <View style={styles.historyCard}>
+          <View style={styles.historyRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.historyTitle}>On-Time Monthly EMI Payment</Text>
+              <Text style={styles.historyDate}>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+            </View>
+            <View style={[styles.historyBadge, { backgroundColor: colors.success + '20' }]}>
+              <Text style={[styles.historyBadgeText, { color: colors.success }]}>+1 Score</Text>
+            </View>
+            <View style={[styles.historyType, { backgroundColor: colors.cyan + '20' }]}><Text style={[styles.historyTypeText, { color: colors.cyan }]}>Timely</Text></View>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+        </View>
+      </ScrollView>
+
+      {/* Request Limit Modal */}
+      <Modal visible={showRequest} transparent animationType="slide">
+        <Pressable style={styles.modalOverlay} onPress={() => setShowRequest(false)}>
+          <Pressable style={styles.modalSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Request Credit Limit Increase</Text>
+            <Text style={styles.modalLabel}>Monthly Income</Text>
+            <TextInput style={styles.modalInput} placeholder="Enter monthly income" placeholderTextColor={colors.textMuted} keyboardType="numeric" value={income} onChangeText={setIncome} />
+            <Text style={styles.modalLabel}>Requested New Limit</Text>
+            <TextInput style={styles.modalInput} placeholder="Max ₹2,00,000" placeholderTextColor={colors.textMuted} keyboardType="numeric" value={requestedLimit} onChangeText={setRequestedLimit} />
+            <View style={styles.modalActions}>
+              <Pressable style={styles.cancelBtn} onPress={() => setShowRequest(false)}><Text style={styles.cancelText}>Cancel</Text></Pressable>
+              <Pressable style={styles.submitBtn} onPress={handleRequest}><Text style={styles.submitText}>Submit Request</Text></Pressable>
+            </View>
+          </Pressable>
         </Pressable>
-      )}
-
-      {/* Factors */}
-      <Text style={styles.section}>Score Factors</Text>
-      {profile.factors.map((f: any, i: number) => (
-        <View key={i} style={styles.factorRow}>
-          <View style={[styles.factorDot, {
-            backgroundColor: f.status === 'good' ? colors.success : f.status === 'warn' ? colors.warning : f.status === 'bad' ? colors.error : colors.textMuted
-          }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.factorName}>{f.name}</Text>
-            <Text style={styles.factorImpact}>{f.impact} Impact{f.value ? ` • ${f.value}` : ''}</Text>
-          </View>
-          <Ionicons
-            name={f.status === 'good' ? 'checkmark-circle' : f.status === 'warn' ? 'warning' : 'alert-circle'}
-            size={20}
-            color={f.status === 'good' ? colors.success : f.status === 'warn' ? colors.warning : colors.error}
-          />
-        </View>
-      ))}
-
-      {/* EMI summary */}
-      <Text style={styles.section}>EMI Summary</Text>
-      <View style={styles.emiSummary}>
-        <View style={styles.emiStat}>
-          <Text style={styles.dim}>Active</Text>
-          <Text style={[styles.emiStatVal, { color: colors.gold }]}>{profile.active_emis}</Text>
-        </View>
-        <View style={styles.emiStat}>
-          <Text style={styles.dim}>Completed</Text>
-          <Text style={[styles.emiStatVal, { color: colors.success }]}>{profile.completed_emis}</Text>
-        </View>
-      </View>
-    </ScrollView>
+      </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  header: { paddingHorizontal: spacing.xl, marginBottom: spacing.lg },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   title: { color: colors.text, fontSize: fs.xxl, fontWeight: '700' },
-  sub: { color: colors.textDim, marginTop: 4 },
-  gaugeCard: { marginHorizontal: spacing.xl, padding: spacing.xl, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.gold, overflow: 'hidden', alignItems: 'center' },
-  gauge: { width: '100%', height: 10, borderRadius: 5, backgroundColor: colors.bg3, overflow: 'hidden' },
-  gaugeBg: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.bg3 },
-  gaugeFill: { height: '100%', borderRadius: 5 },
-  gaugeLabels: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 4 },
-  gaugeMin: { color: colors.textMuted, fontSize: fs.sm },
-  gaugeMax: { color: colors.textMuted, fontSize: fs.sm },
-  scoreBlock: { alignItems: 'center', marginTop: spacing.lg },
-  scoreNum: { fontSize: 56, fontWeight: '700', lineHeight: 62 },
-  tierBadge: { paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: radius.pill, borderWidth: 1, marginTop: spacing.sm },
-  tierText: { fontSize: fs.sm, fontWeight: '700', letterSpacing: 1 },
-  limitsCard: { marginHorizontal: spacing.xl, marginTop: spacing.md, padding: spacing.lg, backgroundColor: colors.bg2, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border },
-  sectionLabel: { color: colors.textDim, fontSize: 10, letterSpacing: 1, fontWeight: '700' },
-  limitTotal: { color: colors.text, fontSize: fs.xxxl, fontWeight: '700', marginTop: 4 },
-  utilBar: { height: 8, backgroundColor: colors.bg3, borderRadius: 4, marginTop: spacing.md, overflow: 'hidden' },
-  utilFill: { height: '100%', backgroundColor: colors.warning, borderRadius: 4 },
-  limitRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.md },
-  dim: { color: colors.textDim, fontSize: fs.sm },
-  limitVal: { fontWeight: '700', fontSize: fs.lg, marginTop: 2 },
-  utilLabel: { color: colors.textDim, marginTop: spacing.sm, fontSize: fs.sm },
-  kycCard: { flexDirection: 'row', alignItems: 'center', marginHorizontal: spacing.xl, marginTop: spacing.md, padding: spacing.lg, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.gold },
-  kycTitle: { color: colors.text, fontWeight: '700' },
-  kycSub: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  section: { color: colors.text, fontSize: fs.lg, fontWeight: '700', paddingHorizontal: spacing.xl, marginTop: spacing.xl, marginBottom: spacing.sm },
-  factorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginHorizontal: spacing.xl, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
-  factorDot: { width: 10, height: 10, borderRadius: 5 },
-  factorName: { color: colors.text, fontWeight: '600' },
-  factorImpact: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  emiSummary: { flexDirection: 'row', gap: spacing.md, paddingHorizontal: spacing.xl },
-  emiStat: { flex: 1, padding: spacing.lg, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, alignItems: 'center' },
-  emiStatVal: { fontSize: fs.xxxl, fontWeight: '700', marginTop: 4 },
+  gaugeCard: { alignItems: 'center', paddingVertical: spacing.xxl, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', marginBottom: spacing.lg },
+  scoreNum: { color: colors.white, fontSize: 56, fontWeight: '700' },
+  scoreDenom: { color: colors.textDim, fontSize: fs.lg },
+  ratingBadge: { paddingHorizontal: spacing.lg, paddingVertical: 4, borderRadius: radius.pill, marginTop: spacing.sm },
+  ratingText: { fontWeight: '700' },
+  limitCard: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  limitLabel: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600', marginBottom: spacing.sm },
+  limitTrack: { height: 8, backgroundColor: colors.border, borderRadius: radius.pill, overflow: 'hidden' },
+  limitFill: { height: '100%', backgroundColor: colors.primary, borderRadius: radius.pill },
+  limitRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
+  limitVal: { color: colors.text, fontSize: fs.lg, fontWeight: '700' },
+  limitSub: { color: colors.textMuted, fontSize: fs.xs },
+  reqBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: spacing.md, marginTop: spacing.lg },
+  reqBtnText: { color: colors.white, fontWeight: '700' },
+  sectionTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.sm },
+  factorsCard: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  factorRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
+  factorLabel: { color: colors.text, fontSize: fs.sm },
+  factorBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
+  factorText: { fontSize: 10, fontWeight: '700' },
+  historyCard: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  historyTitle: { color: colors.text, fontSize: fs.sm, fontWeight: '600' },
+  historyDate: { color: colors.textDim, fontSize: fs.xs, marginTop: 2 },
+  historyBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
+  historyBadgeText: { fontSize: 10, fontWeight: '700' },
+  historyType: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
+  historyTypeText: { fontSize: 10, fontWeight: '700' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: spacing.xl },
+  modalSheet: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.xl },
+  modalTitle: { color: colors.text, fontSize: fs.xl, fontWeight: '700', marginBottom: spacing.lg },
+  modalLabel: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600', marginBottom: spacing.sm },
+  modalInput: { backgroundColor: colors.card, borderRadius: radius.md, paddingHorizontal: spacing.lg, height: 48, color: colors.text, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  modalActions: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm },
+  cancelBtn: { flex: 1, height: 48, borderRadius: radius.md, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
+  cancelText: { color: colors.textDim, fontWeight: '700' },
+  submitBtn: { flex: 2, height: 48, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  submitText: { color: colors.white, fontWeight: '700' },
 });

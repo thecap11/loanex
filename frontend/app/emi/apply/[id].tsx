@@ -1,217 +1,302 @@
-import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/context/AuthContext';
+import { useAlert } from '@/src/context/AlertContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
 import { formatINR } from '@/src/utils/currency';
+import { calculateEmi, generateCaseId } from '@/src/lib/emi';
+import { productService } from '@/src/services/productService';
+import { creditService } from '@/src/services/creditService';
+import { emiService } from '@/src/services/emiService';
+import { addressService } from '@/src/services/addressService';
+import { notificationService } from '@/src/services/notificationService';
 
 export default function EmiApply() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { api, user } = useAuth();
+  const { id, tenure: tenureParam } = useLocalSearchParams<{ id: string; tenure?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { toast } = useAlert();
+
   const [product, setProduct] = useState<any>(null);
-  const [config, setConfig] = useState<any>(null);
-  const [addresses, setAddresses] = useState<any[]>([]);
   const [credit, setCredit] = useState<any>(null);
-  const [tenure, setTenure] = useState<number>(6);
-  const [addressId, setAddressId] = useState<string | null>(null);
-  const [emiCalc, setEmiCalc] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [addresses, setAddresses] = useState<any[]>([]);
+  const [selectedAddr, setSelectedAddr] = useState<string | null>(null);
+  const [existingApp, setExistingApp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [tenure, setTenure] = useState(Number(tenureParam) || 3);
+  const [showKyc, setShowKyc] = useState(false);
+  const [kyc, setKyc] = useState({ full_name: '', email: '', gender: '', aadhaar_number: '', pan_number: '', house_no: '', street: '', city: '', pincode: '', state: '', housing_type: '' });
 
-  useEffect(() => {
-    (async () => {
-      const [p, cfg, addrs, cr] = await Promise.all([
-        api(`/products/${id}`),
-        api('/emi/config'),
-        api('/addresses'),
-        api('/credit/profile'),
-      ]);
-      setProduct(p); setConfig(cfg); setAddresses(addrs); setCredit(cr);
-      setTenure(cfg.tenures[1] || 6);
-      const def = addrs.find((a: any) => a.is_default);
-      if (def) setAddressId(def.id);
-      else if (addrs.length > 0) setAddressId(addrs[0].id);
-    })();
-  }, [id]);
-
-  useEffect(() => {
-    if (!product) return;
-    (async () => setEmiCalc(await api(`/emi/calculate?product_id=${id}&tenure=${tenure}`)))();
-  }, [product, tenure]);
-
-  const submit = async () => {
-    setErr(null); setBusy(true);
+  const load = useCallback(async () => {
+    if (!user || !id) return;
     try {
-      if (!addressId) throw new Error('Please select an address');
-      const r = await api('/emi/apply', {
-        method: 'POST',
-        body: JSON.stringify({ product_id: id, qty: 1, tenure_months: tenure, address_id: addressId }),
-      });
-      router.replace(`/emi/${r.id}`);
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+      const [p, cr, addrs, existing] = await Promise.all([
+        productService.getProduct(id),
+        creditService.getCreditProfile(user.id),
+        addressService.getAddresses(user.id),
+        emiService.checkExistingApplication(user.id, id),
+      ]);
+      setProduct(p);
+      setCredit(cr);
+      setAddresses(addrs);
+      setExistingApp(existing);
+      if (p?.available_tenures?.length && !tenureParam) setTenure(p.available_tenures[0]);
+      const def = addrs.find((a) => a.is_default);
+      setSelectedAddr(def?.id || addrs[0]?.id || null);
+      setShowKyc(cr?.kyc_status !== 'VERIFIED');
+      if (cr) setKyc((prev) => ({ ...prev, full_name: cr.full_name || '', email: cr.email || user.email, house_no: cr.house_no || '', street: cr.street || '', city: cr.city || '', pincode: cr.pincode || '', state: cr.state || '' }));
+    } catch (e) {} finally { setLoading(false); }
+  }, [user, id, tenureParam]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const emiCalc = useMemo(() => {
+    if (!product) return { monthly: 0, totalInterest: 0, totalPayable: 0, principal: 0 };
+    const downPmt = credit?.custom_down_payment_pct ? (product.price * credit.custom_down_payment_pct / 100) : product.down_payment;
+    const rate = credit?.custom_interest_rate || product.interest_rate || 14;
+    const fee = credit?.custom_processing_fee || product.processing_fee || 499;
+    const principal = product.price - downPmt;
+    const monthly = calculateEmi(principal, rate, tenure);
+    const totalPayable = monthly * tenure + downPmt + fee;
+    const totalInterest = monthly * tenure - principal;
+    return { monthly, totalInterest, totalPayable, principal, downPmt, rate, fee };
+  }, [product, credit, tenure]);
+
+  const handleSaveKyc = async () => {
+    if (!kyc.full_name || !kyc.email || !kyc.aadhaar_number || !kyc.pan_number || !kyc.house_no || !kyc.street || !kyc.city || !kyc.pincode || !kyc.state || !kyc.housing_type) {
+      toast('Fill all KYC fields', 'error'); return;
+    }
+    if (kyc.aadhaar_number.length !== 12) { toast('Aadhaar must be 12 digits', 'error'); return; }
+    if (kyc.pan_number.length !== 10) { toast('PAN must be 10 characters', 'error'); return; }
+    try {
+      await creditService.updateCustomerProfile(user!.id, kyc);
+      toast('KYC verified!', 'success');
+      setShowKyc(false);
+      setCredit({ ...credit, kyc_status: 'VERIFIED' });
+    } catch (e: any) { toast(e.message, 'error'); }
   };
 
-  if (!product || !config || !emiCalc) return <View style={styles.center}><ActivityIndicator color={colors.white} /></View>;
+  const handleSubmit = async () => {
+    if (!user || !product) return;
+    if (!selectedAddr) { toast('Select a delivery address', 'error'); return; }
+    const addr = addresses.find((a) => a.id === selectedAddr);
+    const shippingText = addr ? `${addr.house_no}, ${addr.street}, ${addr.city}, ${addr.state} ${addr.pincode}` : '';
+    setSubmitting(true);
+    try {
+      await emiService.submitEmiApplication({
+        user_id: user.id,
+        product_id: product.id,
+        product_name: product.name,
+        product_image: product.images?.[0] || '',
+        product_price: product.price,
+        down_payment: emiCalc.downPmt,
+        emi_months: tenure,
+        monthly_amount: emiCalc.monthly,
+        total_amount: emiCalc.totalPayable,
+        total_interest: emiCalc.totalInterest,
+        interest_rate: emiCalc.rate,
+        processing_fee: emiCalc.fee,
+        full_name: credit?.full_name || kyc.full_name,
+        phone: user.mobile,
+        address: shippingText,
+        shipping_address: shippingText,
+      });
+      toast('EMI application submitted!', 'success');
+      router.replace('/(customer)/emi');
+    } catch (e: any) { toast(e.message, 'error'); } finally { setSubmitting(false); }
+  };
 
-  const affordable = product.price <= (credit?.available_limit || 0);
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center' }}><ActivityIndicator color={colors.white} size="large" /></View>;
+  if (!product) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: colors.textDim }}>Product not found</Text></View>;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Pressable testID="apply-back" onPress={() => router.back()} style={styles.iconBtn}><Ionicons name="chevron-back" size={20} color={colors.text} /></Pressable>
-        <Text style={styles.title}>Apply for EMI</Text>
-        <View style={{ width: 40 }} />
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()}><Ionicons name="arrow-back" size={22} color={colors.text} /></Pressable>
+        <Text style={styles.title}>EMI Application</Text>
+        <View style={{ width: 22 }} />
       </View>
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 160 }}>
-        {/* Product summary */}
-        <View style={styles.productRow}>
-          <Image source={{ uri: product.image }} style={styles.pimg} contentFit="cover" />
+
+      <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
+        {/* Product Brief */}
+        <View style={styles.briefCard}>
+          <Image source={{ uri: product.images?.[0] }} style={styles.briefImg} contentFit="cover" />
           <View style={{ flex: 1 }}>
-            <Text style={styles.pbrand}>{product.brand}</Text>
-            <Text style={styles.pname}>{product.name}</Text>
-            <Text style={styles.pprice}>{formatINR(product.price)}</Text>
+            <Text style={styles.briefName} numberOfLines={2}>{product.name}</Text>
+            <Text style={styles.briefPrice}>{formatINR(product.price)}</Text>
           </View>
         </View>
 
-        {/* Credit check */}
-        <View style={[styles.creditBox, { borderColor: affordable ? colors.success : colors.error }]}>
-          <Ionicons name={affordable ? 'checkmark-circle' : 'alert-circle'} size={20} color={affordable ? colors.success : colors.error} />
-          <View style={{ flex: 1, marginLeft: spacing.sm }}>
-            <Text style={styles.creditTitle}>Credit Score: {credit?.credit_score}</Text>
-            <Text style={styles.creditSub}>Available limit: {formatINR(credit?.available_limit || 0)}</Text>
-            {!affordable && <Text style={styles.creditErr}>Order exceeds your available limit</Text>}
+        {/* Existing Application Warning */}
+        {existingApp && (
+          <View style={styles.warnBox}>
+            <Ionicons name="warning" size={20} color={colors.warning} />
+            <Text style={styles.warnText}>You already have an active application for this product.</Text>
           </View>
-        </View>
+        )}
 
-        {/* Tenure */}
-        <Text style={styles.section}>Select Tenure</Text>
-        <View style={styles.tenureRow}>
-          {(emiCalc.tenures || config.tenures).map((t: number) => (
-            <Pressable testID={`apply-tenure-${t}`} key={t} style={[styles.tBtn, tenure === t && styles.tBtnActive]} onPress={() => setTenure(t)}>
-              <Text style={[styles.tText, tenure === t && { color: colors.black }]}>{t}</Text>
-              <Text style={[styles.tSub, tenure === t && { color: colors.black }]}>months</Text>
+        {/* KYC Form */}
+        {showKyc && (
+          <View style={styles.kycCard}>
+            <Text style={styles.kycTitle}>KYC Verification Required</Text>
+            <Text style={styles.kycLabel}>Full Name</Text>
+            <TextInput style={styles.kycInput} value={kyc.full_name} onChangeText={(t) => setKyc({ ...kyc, full_name: t })} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>Email</Text>
+            <TextInput style={styles.kycInput} value={kyc.email} onChangeText={(t) => setKyc({ ...kyc, email: t })} keyboardType="email-address" placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>Gender</Text>
+            <View style={styles.chipRow}>
+              {['Male', 'Female', 'Other'].map((g) => (
+                <Pressable key={g} style={[styles.kycChip, kyc.gender === g && styles.kycChipActive]} onPress={() => setKyc({ ...kyc, gender: g })}>
+                  <Text style={[styles.kycChipText, kyc.gender === g && styles.kycChipTextActive]}>{g}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.kycLabel}>Aadhaar Number (12 digits)</Text>
+            <TextInput style={styles.kycInput} value={kyc.aadhaar_number} onChangeText={(t) => setKyc({ ...kyc, aadhaar_number: t.replace(/[^0-9]/g, '') })} keyboardType="numeric" maxLength={12} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>PAN Number (10 chars)</Text>
+            <TextInput style={styles.kycInput} value={kyc.pan_number} onChangeText={(t) => setKyc({ ...kyc, pan_number: t.toUpperCase().slice(0, 10) })} maxLength={10} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>House / Flat No.</Text>
+            <TextInput style={styles.kycInput} value={kyc.house_no} onChangeText={(t) => setKyc({ ...kyc, house_no: t })} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>Street / Locality</Text>
+            <TextInput style={styles.kycInput} value={kyc.street} onChangeText={(t) => setKyc({ ...kyc, street: t })} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>City</Text>
+            <TextInput style={styles.kycInput} value={kyc.city} onChangeText={(t) => setKyc({ ...kyc, city: t })} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>Pincode (6 digits)</Text>
+            <TextInput style={styles.kycInput} value={kyc.pincode} onChangeText={(t) => setKyc({ ...kyc, pincode: t.replace(/[^0-9]/g, '') })} keyboardType="numeric" maxLength={6} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>State</Text>
+            <TextInput style={styles.kycInput} value={kyc.state} onChangeText={(t) => setKyc({ ...kyc, state: t })} placeholderTextColor={colors.textMuted} />
+            <Text style={styles.kycLabel}>Housing Type</Text>
+            <View style={styles.chipRow}>
+              {['Owned', 'Rented', 'Family', 'PG'].map((h) => (
+                <Pressable key={h} style={[styles.kycChip, kyc.housing_type === h && styles.kycChipActive]} onPress={() => setKyc({ ...kyc, housing_type: h })}>
+                  <Text style={[styles.kycChipText, kyc.housing_type === h && styles.kycChipTextActive]}>{h}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable style={styles.saveKycBtn} onPress={handleSaveKyc}>
+              <Text style={styles.saveKycText}>Save & Proceed</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Tenure Selection */}
+        <Text style={styles.sectionTitle}>Select Tenure</Text>
+        <View style={styles.tenureGrid}>
+          {(product.available_tenures || [3,6,9,12,18,24]).map((t: number) => (
+            <Pressable key={t} style={[styles.tenureChip, tenure === t && styles.tenureChipActive]} onPress={() => setTenure(t)}>
+              <Text style={[styles.tenureChipText, tenure === t && styles.tenureChipTextActive]}>{t} mo</Text>
             </Pressable>
           ))}
         </View>
 
-        {/* Financial summary */}
-        <Text style={styles.section}>Financial Summary</Text>
-        <View style={styles.summary}>
-          <Row label="Product Price" value={formatINR(product.price)} />
-          <Row label={`Down Payment (${((emiCalc.down_payment / product.price) * 100).toFixed(0)}%)`} value={formatINR(emiCalc.down_payment)} accent />
-          <Row label="Loan Principal" value={formatINR(emiCalc.principal)} />
-          <Row label={`Interest @ ${emiCalc.interest_rate}% APR`} value={formatINR(emiCalc.total_interest)} warn />
-          <Row label="Processing Fee" value={formatINR(emiCalc.processing_fee)} />
-          {emiCalc.custom_charges && emiCalc.custom_charges.map((c: any, i: number) => (
-            <Row key={i} label={c.label} value={formatINR(c.amount)} warn />
-          ))}
-          <View style={styles.divider} />
-          <Row label="Monthly EMI" value={formatINR(emiCalc.monthly)} bold />
-          <Row label="Total Payable" value={formatINR(emiCalc.total_payable)} />
+        {/* Financial Summary */}
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Financial Summary</Text>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Product Price</Text><Text style={styles.summaryVal}>{formatINR(product.price)}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Down Payment</Text><Text style={styles.summaryVal}>{formatINR(emiCalc.downPmt)}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Financed Principal</Text><Text style={styles.summaryVal}>{formatINR(emiCalc.principal)}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Interest Rate</Text><Text style={styles.summaryVal}>{emiCalc.rate}% p.a.</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Processing Fee</Text><Text style={styles.summaryVal}>{formatINR(emiCalc.fee)}</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Monthly EMI</Text><Text style={[styles.summaryVal, { color: colors.cyan, fontWeight: '700' }]}>{formatINR(emiCalc.monthly)}/mo</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.summaryLabel}>Total Interest</Text><Text style={styles.summaryVal}>{formatINR(emiCalc.totalInterest)}</Text></View>
+          <View style={[styles.summaryRow, { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm }]}>
+            <Text style={styles.totalLabel}>Total Payable</Text><Text style={styles.totalVal}>{formatINR(emiCalc.totalPayable)}</Text>
+          </View>
         </View>
 
-        {/* Address */}
-        <View style={styles.addressHeader}>
-          <Text style={styles.section}>Delivery Address</Text>
-          <Pressable testID="add-addr-btn" onPress={() => router.push('/addresses')}>
-            <Text style={styles.addNew}>+ Add new</Text>
-          </Pressable>
+        {/* Borrower Details */}
+        <Text style={styles.sectionTitle}>Borrower Details</Text>
+        <View style={styles.borrowerCard}>
+          <Text style={styles.borrowerName}>{credit?.full_name || kyc.full_name || 'N/A'}</Text>
+          <Text style={styles.borrowerPhone}>{user?.mobile}</Text>
+          <Text style={styles.borrowerAddr} numberOfLines={2}>{credit?.house_no}, {credit?.street}, {credit?.city}, {credit?.state} {credit?.pincode}</Text>
         </View>
+
+        {/* Delivery Address Selector */}
+        <Text style={styles.sectionTitle}>Delivery Address</Text>
         {addresses.length === 0 ? (
-          <Pressable style={styles.noAddrBox} onPress={() => router.push('/addresses')}>
-            <Ionicons name="location-outline" size={22} color={colors.textDim} />
-            <Text style={styles.noAddrText}>Add a delivery address to continue</Text>
+          <Pressable style={styles.addAddrBtn} onPress={() => router.push('/addresses')}>
+            <Ionicons name="add-circle-outline" size={20} color={colors.primaryLight} />
+            <Text style={styles.addAddrText}>Add Delivery Address</Text>
           </Pressable>
-        ) : addresses.map((a) => (
-          <Pressable testID={`addr-opt-${a.id}`} key={a.id} style={[styles.addrCard, addressId === a.id && styles.addrCardActive]} onPress={() => setAddressId(a.id)}>
-            <View style={[styles.radio, addressId === a.id && styles.radioOn]}>{addressId === a.id && <View style={styles.radioDot} />}</View>
-            <View style={{ flex: 1, marginLeft: spacing.md }}>
-              <View style={styles.addrTop}>
-                <Text style={styles.addrLabel}>{a.label}</Text>
-                <Text style={styles.addrName}>{a.full_name}</Text>
+        ) : (
+          addresses.map((a) => (
+            <Pressable key={a.id} style={[styles.addrCard, selectedAddr === a.id && styles.addrCardActive]} onPress={() => setSelectedAddr(a.id)}>
+              <View style={styles.radioOuter}>{selectedAddr === a.id && <View style={styles.radioInner} />}</View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.addrTagRow}>
+                  <View style={styles.addrTag}><Text style={styles.addrTagText}>{a.tag?.toUpperCase()}</Text></View>
+                  {a.is_default && <Text style={styles.defaultBadge}>Default</Text>}
+                </View>
+                <Text style={styles.addrText}>{a.house_no}, {a.street}</Text>
+                <Text style={styles.addrText}>{a.city}, {a.state} {a.pincode}</Text>
               </View>
-              <Text style={styles.addrLine}>{a.line1}, {a.city} - {a.pincode}</Text>
-            </View>
-          </Pressable>
-        ))}
+            </Pressable>
+          ))
+        )}
 
-        {err && <Text style={styles.err}>{err}</Text>}
-      </ScrollView>
-
-      <View style={[styles.footer, { paddingBottom: 20 + insets.bottom }]}>
-        <Pressable
-          testID="submit-apply-btn"
-          style={[styles.submitBtn, (!addressId || !affordable || busy) && { opacity: 0.4 }]}
-          disabled={!addressId || !affordable || busy}
-          onPress={submit}
-        >
-          {busy ? <ActivityIndicator color={colors.black} /> : (
-            <>
-              <Text style={styles.submitText}>Submit EMI Application</Text>
-              <Text style={styles.submitSub}>Awaiting admin approval</Text>
-            </>
-          )}
+        <Pressable style={[styles.submitBtn, (existingApp || submitting) && { opacity: 0.5 }]} onPress={handleSubmit} disabled={!!existingApp || submitting}>
+          {submitting ? <ActivityIndicator color={colors.white} /> : <Text style={styles.submitText}>Submit EMI Application</Text>}
         </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function Row({ label, value, bold, warn, accent }: any) {
-  return (
-    <View style={styles.row}>
-      <Text style={[styles.rowLabel, bold && { color: colors.text, fontWeight: '700' }]}>{label}</Text>
-      <Text style={[styles.rowValue, bold && { fontSize: fs.xl, color: colors.gold }, warn && { color: colors.warning }, accent && { color: colors.gold }]}>{value}</Text>
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.xl, paddingBottom: spacing.md },
-  iconBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
-  title: { color: colors.text, fontSize: fs.xl, fontWeight: '700' },
-  productRow: { flexDirection: 'row', gap: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  pimg: { width: 70, height: 70, borderRadius: radius.sm, backgroundColor: colors.bg3 },
-  pbrand: { color: colors.gold, fontSize: fs.sm, fontWeight: '700' },
-  pname: { color: colors.text, fontWeight: '700', marginTop: 2 },
-  pprice: { color: colors.text, marginTop: 4, fontWeight: '700' },
-  creditBox: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1 },
-  creditTitle: { color: colors.text, fontWeight: '700' },
-  creditSub: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  creditErr: { color: colors.error, fontSize: fs.sm, marginTop: 4, fontWeight: '600' },
-  section: { color: colors.textDim, fontSize: fs.sm, letterSpacing: 1, textTransform: 'uppercase', marginTop: spacing.xl, marginBottom: spacing.sm },
-  tenureRow: { flexDirection: 'row', gap: spacing.sm },
-  tBtn: { flex: 1, height: 64, borderRadius: radius.md, backgroundColor: colors.bg2, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  tBtnActive: { backgroundColor: colors.white, borderColor: colors.white },
-  tText: { color: colors.text, fontSize: fs.xl, fontWeight: '700' },
-  tSub: { color: colors.textDim, fontSize: fs.sm },
-  summary: { padding: spacing.lg, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  rowLabel: { color: colors.textDim },
-  rowValue: { color: colors.text, fontWeight: '600' },
-  divider: { height: 1, backgroundColor: colors.divider, marginVertical: spacing.sm },
-  addressHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  addNew: { color: colors.gold, fontWeight: '700', marginTop: spacing.xl },
-  noAddrBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed' },
-  noAddrText: { color: colors.textDim, flex: 1 },
-  addrCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
-  addrCardActive: { borderColor: colors.gold },
-  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
-  radioOn: { borderColor: colors.gold },
-  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.gold },
-  addrTop: { flexDirection: 'row', gap: spacing.sm, alignItems: 'baseline' },
-  addrLabel: { color: colors.gold, fontSize: fs.sm, fontWeight: '700' },
-  addrName: { color: colors.text, fontWeight: '600' },
-  addrLine: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  err: { color: colors.error, marginTop: spacing.md },
-  footer: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: spacing.lg, backgroundColor: colors.bg2, borderTopWidth: 1, borderTopColor: colors.border },
-  submitBtn: { minHeight: 54, borderRadius: radius.md, backgroundColor: colors.white, alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm },
-  submitText: { color: colors.black, fontWeight: '700', fontSize: fs.lg },
-  submitSub: { color: colors.black, fontSize: fs.sm, opacity: 0.7, marginTop: 2 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  title: { color: colors.text, fontSize: fs.xxl, fontWeight: '700' },
+  briefCard: { flexDirection: 'row', gap: spacing.md, backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
+  briefImg: { width: 60, height: 60, borderRadius: radius.sm, backgroundColor: colors.surface },
+  briefName: { color: colors.text, fontSize: fs.base, fontWeight: '600' },
+  briefPrice: { color: colors.accent, fontSize: fs.lg, fontWeight: '700', marginTop: 4 },
+  warnBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.warning + '15', borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.warning + '40' },
+  warnText: { color: colors.warning, fontSize: fs.sm, fontWeight: '600', flex: 1 },
+  kycCard: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  kycTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.md },
+  kycLabel: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600', marginBottom: 4, marginTop: spacing.sm },
+  kycInput: { backgroundColor: colors.surface, borderRadius: radius.md, paddingHorizontal: spacing.lg, height: 46, color: colors.text, borderWidth: 1, borderColor: colors.border },
+  chipRow: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
+  kycChip: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  kycChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  kycChipText: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600' },
+  kycChipTextActive: { color: colors.white },
+  saveKycBtn: { backgroundColor: colors.primary, borderRadius: radius.md, height: 48, alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
+  saveKycText: { color: colors.white, fontWeight: '700' },
+  sectionTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.sm, marginTop: spacing.lg },
+  tenureGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  tenureChip: { height: 44, paddingHorizontal: spacing.lg, borderRadius: radius.pill, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  tenureChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  tenureChipText: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600' },
+  tenureChipTextActive: { color: colors.white },
+  summaryCard: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  summaryTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.md },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  summaryLabel: { color: colors.textDim, fontSize: fs.sm },
+  summaryVal: { color: colors.text, fontSize: fs.sm, fontWeight: '600' },
+  totalLabel: { color: colors.text, fontSize: fs.base, fontWeight: '700' },
+  totalVal: { color: colors.text, fontSize: fs.lg, fontWeight: '700' },
+  borrowerCard: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  borrowerName: { color: colors.text, fontSize: fs.base, fontWeight: '700' },
+  borrowerPhone: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
+  borrowerAddr: { color: colors.textMuted, fontSize: fs.sm, marginTop: 2 },
+  addAddrBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.card, padding: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.primary + '40' },
+  addAddrText: { color: colors.primaryLight, fontWeight: '600' },
+  addrCard: { flexDirection: 'row', gap: spacing.md, backgroundColor: colors.card, padding: spacing.lg, borderRadius: radius.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  addrCardActive: { borderColor: colors.primary },
+  radioOuter: { width: 20, height: 20, borderRadius: radius.pill, borderWidth: 2, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  radioInner: { width: 10, height: 10, borderRadius: radius.pill, backgroundColor: colors.primary },
+  addrTagRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: 4 },
+  addrTag: { backgroundColor: colors.primary + '20', borderRadius: radius.sm, paddingHorizontal: 6, paddingVertical: 2 },
+  addrTagText: { color: colors.primaryLight, fontSize: 10, fontWeight: '700' },
+  defaultBadge: { color: colors.success, fontSize: 10, fontWeight: '700' },
+  addrText: { color: colors.textDim, fontSize: fs.sm },
+  submitBtn: { backgroundColor: colors.primary, borderRadius: radius.md, height: 54, alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
+  submitText: { color: colors.white, fontWeight: '700', fontSize: fs.base },
 });

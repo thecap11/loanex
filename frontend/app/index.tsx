@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
@@ -17,7 +16,6 @@ export default function Index() {
 
   if (!user) return <Redirect href="/auth/login" />;
   if (user.role === 'admin') return <Redirect href="/(admin)/dashboard" />;
-  if (user.role === 'inventory_manager') return <Redirect href="/(inventory)/stock" />;
   return <Redirect href="/(customer)/home" />;
 }
 

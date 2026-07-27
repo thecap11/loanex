@@ -1,95 +1,168 @@
-import { useCallback, useState } from 'react';
+import { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from '@/src/context/AuthContext';
 import { colors, spacing, radius, fs } from '@/src/theme';
 import { formatINR } from '@/src/utils/currency';
+import { formatDate } from '@/src/lib/emi';
+import { orderService } from '@/src/services/orderService';
+
+const STEPS = [
+  { title: 'Order Confirmed', desc: 'Your order and payment have been verified by LoanEX.' },
+  { title: 'Dispatched', desc: 'Package picked up by BlueDart Express.' },
+  { title: 'In Transit', desc: 'Package arrived at regional sorting facility.' },
+  { title: 'Out for Delivery', desc: 'Delivery executive is en route to your shipping address.' },
+  { title: 'Delivered', desc: 'Package delivered safely with OTP verification.' },
+];
+
+const STATUS_ORDER = ['CONFIRMED', 'DISPATCHED', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED'];
 
 export default function OrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { api } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [order, setOrder] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const o = await api(`/orders/${id}`); setOrder(o);
-  }, [api, id]);
+    if (!id) return;
+    try { setOrder(await orderService.getOrder(id)); } catch (e) {} finally { setLoading(false); }
+  }, [id]);
+
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  if (!order) return <View style={styles.center}><ActivityIndicator color={colors.white} /></View>;
+  if (loading) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center' }}><ActivityIndicator color={colors.white} size="large" /></View>;
+  if (!order) return <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: colors.textDim }}>Order not found</Text></View>;
+
+  const currentStepIdx = STATUS_ORDER.indexOf(order.order_status);
+  const isCancelled = order.order_status === 'CANCELLED';
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Pressable testID="order-back" onPress={() => router.back()} style={styles.iconBtn}><Ionicons name="chevron-back" size={20} color={colors.text} /></Pressable>
-        <Text style={styles.title}>Order #{order.id.slice(0, 8).toUpperCase()}</Text>
-        <View style={{ width: 40 }} />
+    <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top }}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()}><Ionicons name="arrow-back" size={22} color={colors.text} /></Pressable>
+        <Text style={styles.title}>Order Details</Text>
+        <View style={{ width: 22 }} />
       </View>
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 100 }}>
-        <View style={styles.statusCard}>
-          <Ionicons name="checkmark-circle" size={32} color={colors.success} />
-          <View style={{ flex: 1, marginLeft: spacing.md }}>
-            <Text style={styles.statusTitle}>Order Confirmed</Text>
-            <Text style={styles.statusSub}>{new Date(order.created_at).toLocaleString()}</Text>
+
+      <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
+        {/* Courier Banner */}
+        <View style={styles.courierBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.courierName}>{order.courier_name}</Text>
+            <Text style={styles.trackingId}>AWB: {order.tracking_id}</Text>
+          </View>
+          <Pressable style={styles.invoiceBtn}><Ionicons name="download-outline" size={16} color={colors.primaryLight} /><Text style={styles.invoiceText}>Invoice</Text></Pressable>
+        </View>
+
+        {/* Expected Delivery */}
+        <View style={styles.deliveryBox}>
+          <Ionicons name="calendar-outline" size={20} color={colors.success} />
+          <View>
+            <Text style={styles.deliveryLabel}>Expected Delivery</Text>
+            <Text style={styles.deliveryDate}>{order.expected_delivery ? formatDate(order.expected_delivery) : 'N/A'}</Text>
           </View>
         </View>
 
-        <Text style={styles.section}>Items</Text>
-        {order.items.map((it: any, i: number) => (
-          <View key={i} style={styles.itemRow}>
-            <Image source={{ uri: it.image }} style={styles.itemImg} contentFit="cover" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.itemName}>{it.name}</Text>
-              <Text style={styles.itemMeta}>Qty {it.qty} • {formatINR(it.price)}</Text>
-            </View>
-            <Text style={styles.itemTotal}>{formatINR(it.price * it.qty)}</Text>
+        {/* Tracking Timeline */}
+        {!isCancelled && (
+          <View style={styles.timelineCard}>
+            <Text style={styles.timelineTitle}>Order Tracking</Text>
+            {STEPS.map((step, i) => {
+              const isCompleted = i < currentStepIdx;
+              const isCurrent = i === currentStepIdx;
+              return (
+                <View key={i} style={styles.timelineRow}>
+                  <View style={styles.timelineLeft}>
+                    <View style={[styles.timelineDot, isCompleted && styles.timelineDotCompleted, isCurrent && styles.timelineDotCurrent]} />
+                    {i < STEPS.length - 1 && <View style={[styles.timelineLine, (isCompleted || isCurrent) && styles.timelineLineActive]} />}
+                  </View>
+                  <View style={{ flex: 1, paddingBottom: spacing.md }}>
+                    <Text style={[styles.timelineStepTitle, (isCompleted || isCurrent) && { color: colors.text }]}>{step.title}</Text>
+                    <Text style={styles.timelineStepDesc}>{step.desc}</Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
-        ))}
-
-        <Text style={styles.section}>Delivery</Text>
-        <View style={styles.addressCard}>
-          <Ionicons name="location" size={18} color={colors.gold} />
-          <Text style={styles.addressText}>{order.address}</Text>
-        </View>
-
-        <Text style={styles.section}>Payment</Text>
-        <View style={styles.paymentCard}>
-          <Ionicons name={order.payment_method === 'emi' ? 'calendar' : 'card'} size={18} color={colors.gold} />
-          <Text style={styles.addressText}>{order.payment_method === 'emi' ? `EMI order — Manage in EMI Hub` : `Paid in full — ${formatINR(order.subtotal)}`}</Text>
-        </View>
-
-        {order.emi_application_id && (
-          <Pressable testID="view-emi-btn" style={styles.viewEmi} onPress={() => router.push(`/emi/${order.emi_application_id}`)}>
-            <Text style={styles.viewEmiText}>View EMI Schedule</Text>
-            <Ionicons name="arrow-forward" size={18} color={colors.black} />
-          </Pressable>
         )}
+
+        {isCancelled && <View style={styles.cancelledBox}><Ionicons name="close-circle" size={40} color={colors.error} /><Text style={styles.cancelledText}>Order Cancelled</Text></View>}
+
+        {/* Item Details */}
+        <Text style={styles.sectionTitle}>Item Details</Text>
+        <View style={styles.itemCard}>
+          <Image source={{ uri: order.product_image }} style={styles.itemImg} contentFit="cover" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.itemName} numberOfLines={2}>{order.product_name}</Text>
+            <Text style={styles.itemQty}>Qty: {order.quantity}</Text>
+            <Text style={styles.itemPrice}>{formatINR(order.unit_price)}</Text>
+          </View>
+        </View>
+
+        {/* Shipping & Payment */}
+        <Text style={styles.sectionTitle}>Shipping & Payment</Text>
+        <View style={styles.shipCard}>
+          <Text style={styles.shipLabel}>Delivery Address</Text>
+          <Text style={styles.shipText}>{order.shipping_address}</Text>
+          <View style={styles.divider} />
+          <Text style={styles.shipLabel}>Payment Method</Text>
+          <Text style={styles.shipText}>{order.payment_mode}</Text>
+          <View style={styles.divider} />
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabelText}>Total Amount</Text>
+            <Text style={styles.totalValText}>{formatINR(order.total_amount)}</Text>
+          </View>
+        </View>
+
+        <Pressable style={styles.helpBtn}>
+          <Ionicons name="help-circle-outline" size={20} color={colors.primaryLight} />
+          <Text style={styles.helpText}>Need Help with this Order?</Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.xl, paddingBottom: spacing.md },
-  iconBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.bg2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border },
-  title: { color: colors.text, fontSize: fs.base, fontWeight: '700' },
-  statusCard: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg, backgroundColor: 'rgba(16,185,129,0.1)', borderColor: colors.success, borderWidth: 1, borderRadius: radius.md },
-  statusTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700' },
-  statusSub: { color: colors.textDim, fontSize: fs.sm },
-  section: { color: colors.textDim, fontSize: fs.sm, letterSpacing: 1, textTransform: 'uppercase', marginTop: spacing.xl, marginBottom: spacing.sm },
-  itemRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
-  itemImg: { width: 50, height: 50, borderRadius: radius.sm, backgroundColor: colors.bg3 },
-  itemName: { color: colors.text, fontWeight: '600' },
-  itemMeta: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
-  itemTotal: { color: colors.text, fontWeight: '700' },
-  addressCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  addressText: { color: colors.text, flex: 1 },
-  paymentCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, backgroundColor: colors.bg2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  viewEmi: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, marginTop: spacing.lg, height: 50, borderRadius: radius.md, backgroundColor: colors.white },
-  viewEmiText: { color: colors.black, fontWeight: '700', fontSize: fs.lg },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  title: { color: colors.text, fontSize: fs.xxl, fontWeight: '700' },
+  courierBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
+  courierName: { color: colors.text, fontSize: fs.base, fontWeight: '700' },
+  trackingId: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
+  invoiceBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.primary + '20', borderRadius: radius.sm, paddingHorizontal: spacing.md, paddingVertical: 6 },
+  invoiceText: { color: colors.primaryLight, fontSize: fs.sm, fontWeight: '600' },
+  deliveryBox: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, backgroundColor: colors.success + '15', borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.lg },
+  deliveryLabel: { color: colors.textDim, fontSize: fs.sm },
+  deliveryDate: { color: colors.text, fontSize: fs.lg, fontWeight: '700' },
+  timelineCard: { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  timelineTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.lg },
+  timelineRow: { flexDirection: 'row', gap: spacing.md },
+  timelineLeft: { alignItems: 'center' },
+  timelineDot: { width: 16, height: 16, borderRadius: 8, backgroundColor: colors.border, borderWidth: 2, borderColor: colors.bg },
+  timelineDotCompleted: { backgroundColor: colors.success, borderColor: colors.success },
+  timelineDotCurrent: { backgroundColor: colors.success, borderColor: colors.success },
+  timelineLine: { width: 2, flex: 1, minHeight: 30, backgroundColor: colors.border, marginTop: 2 },
+  timelineLineActive: { backgroundColor: colors.success },
+  timelineStepTitle: { color: colors.textMuted, fontSize: fs.sm, fontWeight: '600' },
+  timelineStepDesc: { color: colors.textMuted, fontSize: fs.xs, marginTop: 2 },
+  cancelledBox: { alignItems: 'center', paddingVertical: spacing.xxl, gap: spacing.md },
+  cancelledText: { color: colors.error, fontSize: fs.lg, fontWeight: '700' },
+  sectionTitle: { color: colors.text, fontSize: fs.lg, fontWeight: '700', marginBottom: spacing.sm },
+  itemCard: { flexDirection: 'row', gap: spacing.md, backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  itemImg: { width: 60, height: 60, borderRadius: radius.sm, backgroundColor: colors.surface },
+  itemName: { color: colors.text, fontSize: fs.base, fontWeight: '600' },
+  itemQty: { color: colors.textDim, fontSize: fs.sm, marginTop: 2 },
+  itemPrice: { color: colors.accent, fontSize: fs.base, fontWeight: '700', marginTop: 2 },
+  shipCard: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+  shipLabel: { color: colors.textDim, fontSize: fs.sm, fontWeight: '600' },
+  shipText: { color: colors.text, fontSize: fs.sm, marginTop: 4 },
+  divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  totalLabelText: { color: colors.text, fontSize: fs.base, fontWeight: '700' },
+  totalValText: { color: colors.text, fontSize: fs.lg, fontWeight: '700' },
+  helpBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: colors.card, borderRadius: radius.md, paddingVertical: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  helpText: { color: colors.primaryLight, fontWeight: '600' },
 });
